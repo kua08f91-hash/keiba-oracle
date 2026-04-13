@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.env
+.env.local
+
+# Data (large files)
+data/jra_races.db
+data/historical_races.json
+
+# Model
+backend/predictor/trained_model.pkl
+
+# Node
+node_modules/
+.next/
+tsconfig.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+/tmp/keiba-*.log
+
+# Preview cache
+.pytest_cache/

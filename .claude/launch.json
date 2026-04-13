@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nextjs",
+      "runtimeExecutable": "/Users/atsushi.furutani/.nvm/versions/node/v20.20.2/bin/npx",
+      "runtimeArgs": ["next", "dev"],
+      "port": 3000
+    }
+  ]
+}
