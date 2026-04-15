@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KEIBA ORACLE</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{navy:{900:'#0a0f1a',800:'#111827',700:'#1a2332',600:'#243044'},gold:{400:'#d4a853',500:'#c99a2e',600:'#a87d1f'}}}}}</script>
+<style>
+  body { font-family: "Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",Meiryo,sans-serif; }
+  .page { display:none } .page.active { display:block }
+  .fade-in { animation:fadeIn .25s ease } @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- PAGE 1: LIST -->
+<div id="page-list" class="page active">
+<header class="bg-navy-900 text-white shadow-xl sticky top-0 z-10 border-b border-navy-600">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="w-8 h-8 bg-gold-500/20 rounded-lg flex items-center justify-center border border-gold-500/30">
+      <svg class="w-5 h-5 text-gold-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+    </div>
+    <div>
+      <h1 class="text-base font-black tracking-widest text-white">KEIBA <span class="text-gold-400">ORACLE</span></h1>
+      <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
+    </div>
+  </div>
+</header>
+<div class="max-w-6xl mx-auto px-4 py-4 space-y-4">
+  <div id="weekTabs"></div>
+  <div id="raceList"></div>
+  <div id="apiStatus" class="text-center text-xs text-gray-400 py-2"></div>
+</div>
+<footer class="mt-6 bg-navy-900 border-t border-navy-600 text-gray-500 text-center py-3 text-[10px]">KEIBA ORACLE &copy; 2026 &mdash; AI Racing Intelligence</footer>
+</div>
+
+<!-- PAGE 2: DETAIL -->
+<div id="page-detail" class="page">
+<header class="bg-navy-900 text-white shadow-xl sticky top-0 z-10 border-b border-navy-600">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+    <button onclick="showList()" class="flex items-center gap-1 text-gray-400 hover:text-gold-400 transition-colors">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+      <span class="text-sm font-bold">Back</span>
+    </button>
+    <div class="h-5 w-px bg-navy-600"></div>
+    <div>
+      <h1 class="text-base font-black tracking-widest">KEIBA <span class="text-gold-400">ORACLE</span></h1>
+      <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
+    </div>
+  </div>
+</header>
+<div class="max-w-6xl mx-auto px-4 py-4 space-y-4">
+  <div id="detail-content"></div>
+</div>
+<footer class="mt-6 bg-navy-900 border-t border-navy-600 text-gray-500 text-center py-3 text-[10px]">KEIBA ORACLE &copy; 2026</footer>
+</div>
+
+<script>
+const API = "http://localhost:8000/api";
+let weekData=[], activeDate="", scheduleCache={};
+
+function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
+function showDetail(raceId){document.getElementById("page-list").classList.remove("active");document.getElementById("page-detail").classList.add("active");window.scrollTo(0,0);loadRaceDetail(raceId);}
+
+async function init(){
+  document.getElementById("apiStatus").textContent="Connecting...";
+  try{const r=await fetch(`${API}/race-dates?weeks=3`);if(!r.ok)throw 0;weekData=await r.json();document.getElementById("apiStatus").textContent="";}
+  catch(e){document.getElementById("apiStatus").innerHTML='<span class="text-red-400">Backend offline</span> — <code class="bg-gray-200 px-1 rounded text-gray-600">python3 -m uvicorn backend.main:app --port 8000</code>';return;}
+  if(!weekData.length){document.getElementById("raceList").innerHTML='<div class="bg-white rounded-xl shadow text-center py-16 text-gray-400 font-bold">No races found</div>';return;}
+  const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const future=weekData.filter(d=>d.date>=today);
+  activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+  renderDateTabs();loadAndRenderDay(activeDate);
+}
+
+const DOW=["日","月","火","水","木","金","土"];
+function parseD(ds){return new Date(ds.slice(0,4)+'-'+ds.slice(4,6)+'-'+ds.slice(6,8));}
+
+function renderDateTabs(){
+  document.getElementById("weekTabs").innerHTML=`
+    <div class="flex gap-1.5 overflow-x-auto pb-1">
+      ${weekData.map(d=>{
+        const dt=parseD(d.date),dow=DOW[dt.getDay()],isSat=dt.getDay()===6,isSun=dt.getDay()===0,sel=d.date===activeDate;
+        const dowC=sel?'text-gold-400':isSun?'text-red-400':isSat?'text-blue-400':'text-gray-400';
+        return`<button onclick="activeDate='${d.date}';renderDateTabs();loadAndRenderDay('${d.date}')"
+          class="flex-none py-2.5 px-4 rounded-xl text-center transition-all min-w-[76px] border ${
+            sel?'bg-navy-900 text-white border-gold-500/50 shadow-lg shadow-gold-500/10'
+               :'bg-white text-gray-600 border-gray-200 hover:border-gray-400 hover:shadow'}">
+          <div class="text-sm font-black">${parseInt(d.date.slice(4,6))}/${parseInt(d.date.slice(6,8))}</div>
+          <div class="text-[10px] font-bold ${dowC}">${dow}</div>
+        </button>`;}).join("")}
+    </div>`;
+}
+
+async function loadAndRenderDay(ds){
+  const el=document.getElementById("raceList");
+  if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
+  el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
+  try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`);const data=await r.json();
+    const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
+    scheduleCache[ds]=sc;renderDay(sc,ds);
+  }catch(e){el.innerHTML='<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">Failed to load</div>';}
+}
+
+function isSpecial(n){return n.includes("特別")||n.includes("ステークス")||n.includes("賞")||n.includes("カップ")||n.includes("GI")||n.includes("GII")||n.includes("GIII")||n.includes("Listed")||n.includes("オープン");}
+// JRA official graded race names (exact match list)
+// Source: JRA公式 2026年重賞競走一覧
+const GRADE_RACES = {
+  "GI": [
+    "フェブラリーS","高松宮記念","大阪杯","桜花賞","皐月賞","天皇賞","NHKマイル",
+    "ヴィクトリアマイル","オークス","日本ダービー","安田記念","宝塚記念",
+    "スプリンターズS","秋華賞","菊花賞","エリザベス女王杯","マイルCS",
+    "ジャパンC","チャンピオンズC","有馬記念","ホープフルS",
+    "朝日杯FS","阪神JF"
+  ],
+  "GII": [
+    "日経新春杯","アメリカJCC","東海S","京都記念","共同通信杯",
+    "京都牝馬S","中山記念","阪急杯","チューリップ賞","弥生賞",
+    "金鯱賞","フィリーズR","スプリングS","日経賞",
+    "ニュージーランドT","アーリントンC","サウジアラビアRC",
+    "フローラS","青葉賞","京王杯SC","目黒記念",
+    "セントウルS","ローズS","オールカマー","京都大賞典",
+    "府中牝馬S","アルゼンチン共和国杯","ステイヤーズS",
+    "札幌記念","セントライト記念","神戸新聞杯","富士S",
+    "スワンS","デイリー杯","京阪杯",
+    "阪神カップ","産経大阪杯","阪神牝馬S","阪神牝馬","NZT","AJC","福島牝馬S"
+  ],
+  "GIII": [
+    "中山金杯","京都金杯","シンザン記念","フェアリーS","京成杯",
+    "愛知杯","東京新聞杯","きさらぎ賞","小倉大賞典","ダイヤモンドS",
+    "中山牝馬S","フラワーC","ファルコンS","阪神大賞典",
+    "ダービーCT","マーガレットS","福島牝馬S","新潟大賞典",
+    "京都新聞杯","葵S","鳴尾記念","エプソムC","函館スプリントS",
+    "CBC賞","ラジオNIKKEI賞","プロキオンS","七夕賞","函館記念",
+    "中京記念","小倉記念","関屋記念","エルムS","北九州記念",
+    "札幌2歳S","キーンランドC","新潟記念","紫苑S","レパードS",
+    "シリウスS","みやこS","武蔵野S","東京スポーツ杯",
+    "京都2歳S","ターコイズS","カペラS","中日新聞杯",
+    "阪神C","チャーチルC","毎日杯","マーチS"
+  ]
+};
+
+function gradeTag(n){
+  // Explicit grade markers
+  if(n.includes("(GI)")||n.includes("（GI）")||n.includes("(G1)"))return`<span class="bg-gradient-to-r from-yellow-500 to-amber-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm">GI</span>`;
+  if(n.includes("(GII)")||n.includes("（GII）")||n.includes("(G2)"))return`<span class="bg-gradient-to-r from-gray-400 to-gray-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GII</span>`;
+  if(n.includes("(GIII)")||n.includes("（GIII）")||n.includes("(G3)"))return`<span class="bg-gradient-to-r from-orange-400 to-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GIII</span>`;
+  // Name-based detection: match from start of race name or exact match
+  // This prevents "富士S" from matching "吾妻小富士S"
+  function _gradeMatch(name,key){return name===key||name.startsWith(key);}
+  for(const key of GRADE_RACES["GI"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-yellow-500 to-amber-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm">GI</span>`;}
+  for(const key of GRADE_RACES["GII"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-gray-400 to-gray-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GII</span>`;}
+  for(const key of GRADE_RACES["GIII"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-orange-400 to-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GIII</span>`;}
+  return"";
+}
+
+function renderDay(schedules,ds){
+  const el=document.getElementById("raceList");
+  if(!schedules||!schedules.length){el.innerHTML='<div class="bg-white rounded-xl shadow text-center py-12 text-gray-400">No races</div>';return;}
+  const dt=parseD(ds),dow=DOW[dt.getDay()],isSat=dt.getDay()===6,isSun=dt.getDay()===0;
+  const dowC=isSun?'text-red-500':isSat?'text-blue-500':'text-gray-500';
+  const cols=schedules.length;
+
+  el.innerHTML=`<div class="fade-in">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="flex items-baseline gap-1.5 bg-white rounded-xl shadow px-4 py-2.5 border border-gray-200">
+        <span class="text-xl font-black text-navy-900">${parseInt(ds.slice(4,6))}月${parseInt(ds.slice(6,8))}日</span>
+        <span class="text-base font-black ${dowC}">${dow}</span>
+      </div>
+      <div class="flex gap-1.5">${schedules.map(s=>`<span class="text-[11px] text-gray-500 bg-white px-2.5 py-1 rounded-lg border border-gray-200 shadow-sm font-medium">${s.name}</span>`).join("")}</div>
+      <div class="flex-1 h-px bg-gray-200"></div>
+    </div>
+    <div class="grid gap-4" style="grid-template-columns:repeat(${Math.min(cols,3)},minmax(0,1fr))">
+      ${schedules.map(sc=>`
+        <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
+          <div class="bg-navy-900 px-3 py-2.5 flex items-center gap-2">
+            <span class="text-gold-400 font-black text-sm">${sc.name}</span>
+            <span class="text-gray-500 text-[10px] ml-auto">${sc.races.length}R</span>
+          </div>
+          <div class="divide-y divide-gray-100">
+            ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName);return`
+              <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
+                  ${r.raceNumber}R
+                </div>
+                <div class="flex-1 min-w-0 ml-2.5">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-bold text-[12px] truncate ${sp?'text-navy-900':'text-gray-600'} group-hover:text-navy-900">${r.raceName||r.raceNumber+'R'}</span>
+                    ${g}
+                  </div>
+                  <div class="text-[10px] text-gray-400">${r.startTime?r.startTime+'発走':''}</div>
+                </div>
+                <svg class="w-3.5 h-3.5 text-gray-200 group-hover:text-navy-800 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              </a>`;}).join("")}
+          </div>
+        </div>`).join("")}
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// DETAIL
+// ============================================================
+const FC={1:{bg:'#fff',text:'#000',border:'#ccc'},2:{bg:'#000',text:'#fff',border:'#000'},3:{bg:'#dc2626',text:'#fff',border:'#dc2626'},4:{bg:'#2563eb',text:'#fff',border:'#2563eb'},5:{bg:'#eab308',text:'#000',border:'#eab308'},6:{bg:'#16a34a',text:'#fff',border:'#16a34a'},7:{bg:'#f97316',text:'#fff',border:'#f97316'},8:{bg:'#ec4899',text:'#fff',border:'#ec4899'}};
+const FL={trackDirection:"回り適性",trackCondition:"馬場適性",jockeyAbility:"騎手能力",trackSpecific:"コース実績",pastPerformance:"近走成績",formTrend:"調子傾向",ageAndSex:"年齢・性別",weightCarried:"斤量",courseAffinity:"コース血統",horseWeightChange:"馬体重変動",trainerAbility:"調教師",distanceAptitude:"距離血統",marketScore:"市場評価"};
+const FW={trackDirection:.2398,trackCondition:.2368,jockeyAbility:.1310,trackSpecific:.0693,pastPerformance:.0584,formTrend:.0255,ageAndSex:.0267,weightCarried:.0261,courseAffinity:.0096,horseWeightChange:.0094,trainerAbility:.0087,distanceAptitude:.0087,marketScore:.15};
+const MS={"◎":{t:"text-red-600",bg:"bg-red-50 border-l-4 border-l-red-500",l:"本命"},"◯":{t:"text-blue-600",bg:"bg-blue-50 border-l-4 border-l-blue-500",l:"対抗"},"▲":{t:"text-amber-600",bg:"bg-amber-50 border-l-4 border-l-amber-400",l:"穴馬"},"△":{t:"text-gray-500",bg:"bg-gray-50 border-l-4 border-l-gray-300",l:"次点"},"":{t:"text-gray-200",bg:"border-l-4 border-l-transparent",l:""}};
+
+let dE=[],dP=[],dB=[],dLongshot=null,sortS=false,expH=null;
+
+async function loadRaceDetail(id){
+  const el=document.getElementById("detail-content");
+  el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
+  sortS=false;expH=null;
+  try{
+    const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`);if(!cr.ok)throw Error("Not found");
+    const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
+    renderDetail(c.raceInfo,"");
+    try{
+      const be=document.getElementById("bets");
+      if(be)be.innerHTML='<div class="px-4 py-4 text-center"><div class="animate-spin inline-block w-5 h-5 border-2 border-navy-800 border-t-gold-400 rounded-full"></div><span class="text-xs text-gray-400 ml-2">Calculating bets...</span></div>';
+      const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`);
+      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
+        const pb=document.getElementById("detail-pattern");
+        if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
+      }
+    }catch(e){}
+    // Always generate fallback bets from scores if API returned none
+    if((!dB||dB.length===0)&&dP.length>=3){
+      const ranked=dP.filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+      if(ranked.length>=3){
+        const h=ranked.map(r=>r.horseNumber);
+        dB=[
+          {rank:1,type:"wide",typeLabel:"ワイド",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
+          {rank:2,type:"wide",typeLabel:"ワイド",horses:[h[0],h[2]],ev:0,odds:0,hitProb:0},
+          {rank:3,type:"umaren",typeLabel:"馬連",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
+          {rank:4,type:"sanrenpuku",typeLabel:"3連複",horses:[h[0],h[1],h[2]],ev:0,odds:0,hitProb:0},
+          {rank:5,type:"tansho",typeLabel:"単勝",horses:[h[0]],ev:0,odds:0,hitProb:0},
+        ];
+      }
+    }
+    renderBets();
+  }catch(e){el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;}
+}
+
+function renderDetail(info,pat){
+  const gc={"GI":"bg-gradient-to-r from-yellow-500 to-amber-600","GII":"bg-gradient-to-r from-gray-400 to-gray-500","GIII":"bg-gradient-to-r from-orange-400 to-orange-600"};
+  const gB=info.grade?`<span class="${gc[info.grade]||''} text-white text-[10px] font-black px-2 py-0.5 rounded shadow">${info.grade}</span>`:'';
+  const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};
+
+  document.getElementById("detail-content").innerHTML=`<div class="fade-in space-y-4">
+    <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
+      <div class="bg-navy-900 px-4 py-3 flex items-center gap-3">
+        <span class="bg-gold-500 text-navy-900 font-black text-sm px-2.5 py-1 rounded shadow">${info.raceNumber}R</span>
+        <span class="text-white font-black text-lg">${info.raceName}</span>
+        ${gB}
+      </div>
+      <div class="px-4 py-2.5 bg-gray-50 flex items-center gap-3 text-sm flex-wrap border-t border-gray-100">
+        <span class="font-bold text-navy-900">${info.surface||''} ${info.distance||''}m</span>
+        <span class="text-gray-400 text-xs">${info.courseDetail||''}</span>
+        ${info.startTime?'<span class="text-gray-300">|</span><span class="text-xs text-gray-500">'+info.startTime+'発走</span>':''}
+        ${info.headCount?'<span class="text-gray-300">|</span><span class="text-xs text-gray-500">'+info.headCount+'頭</span>':''}
+        ${info.trackCondition?'<span class="text-gray-300">|</span><span class="text-xs font-bold text-blue-600">馬場:'+info.trackCondition+'</span>':''}
+      </div>
+    </div>
+    <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden"><div id="racecard"></div></div>
+    <div class="bg-white rounded-xl shadow border border-gray-200 px-4 py-2.5 flex items-center gap-4 text-xs flex-wrap">
+      <span class="font-bold text-gray-400">予想印</span>
+      <span class="text-red-600 font-black">◎本命</span>
+      <span class="text-blue-600 font-black">◯対抗</span>
+      <span class="text-amber-600 font-bold">▲穴馬</span>
+      <span class="text-gray-500 font-bold">△次点</span>
+      <span class="text-gray-300 ml-auto text-[10px]">Score列クリックで詳細</span>
+    </div>
+    <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
+      <div class="bg-navy-900 px-4 py-2.5 flex items-center justify-between">
+        <h2 class="text-gold-400 font-black text-sm tracking-wide">AI OPTIMAL BETS</h2>
+        <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+      </div>
+      <div id="bets" class="divide-y divide-gray-100"></div>
+      <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ AI予想は参考情報です。購入は自己責任でお願いします。</div>
+    </div>
+  </div>`;
+  renderTable();renderBets();
+}
+
+function sColor(s){if(s>=75)return"from-red-400 to-red-600";if(s>=65)return"from-blue-400 to-blue-600";if(s>=55)return"from-amber-400 to-amber-600";if(s>=45)return"from-gray-300 to-gray-400";return"from-gray-200 to-gray-300";}
+function fColor(s){if(s>60)return"text-emerald-700 bg-emerald-50";if(s>=40)return"text-amber-700 bg-amber-50";return"text-red-700 bg-red-50";}
+function popC(p){if(p===1)return"bg-red-600 text-white";if(p===2)return"bg-blue-600 text-white";if(p===3)return"bg-amber-500 text-white";if(p<=5)return"bg-gray-200 text-gray-700";return"bg-gray-100 text-gray-400";}
+function oddC(p){if(p===1)return"text-red-600";if(p===2)return"text-blue-600";if(p<=3)return"text-amber-600";return"text-gray-700";}
+
+function renderFP(f,name){
+  const items=Object.entries(FL).map(([k,l])=>{const s=f[k]||0,w=FW[k]||0;return{l,s,w,c:s*w};}).sort((a,b)=>b.c-a.c);
+  return`<tr class="bg-gray-50 border-b border-gray-200"><td colspan="11" class="p-0"><div class="border-l-4 border-l-navy-800"><div class="px-3 py-1.5 bg-navy-900 text-[11px] font-bold text-gold-400">${name} Score Breakdown</div><div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5 p-3">${items.map(f=>`<div class="flex items-center gap-2 px-2 py-1.5 rounded text-xs ${fColor(f.s)}"><div class="flex-1 min-w-0"><div class="font-bold truncate">${f.l}</div><div class="text-[10px] opacity-70">${f.s.toFixed?f.s.toFixed(0):f.s}pt</div></div><div class="w-12 h-1.5 bg-black/10 rounded-full overflow-hidden flex-shrink-0"><div class="h-full rounded-full bg-current opacity-50" style="width:${Math.min(f.c*1.5,100)}%"></div></div></div>`).join("")}</div></div></td></tr>`;
+}
+
+function renderTable(){
+  const e=dE,p=dP;
+  const sorted=[...e].sort((a,b)=>{if(sortS){const sa=a.isScratched?-1:(p.find(x=>x.horseNumber===a.horseNumber)?.score||0);const sb=b.isScratched?-1:(p.find(x=>x.horseNumber===b.horseNumber)?.score||0);return sb-sa;}return a.horseNumber-b.horseNumber;});
+  let h=`<div><div class="flex justify-end px-2 py-1.5"><button onclick="sortS=!sortS;renderTable()" class="flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold border border-navy-800 text-navy-800 bg-white hover:bg-navy-900 hover:text-white transition-all"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${sortS?'M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12':'M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4'}"/></svg>${sortS?"Score順":"馬番順"}</button></div><div class="overflow-x-auto"><table class="w-full border-collapse text-sm"><thead><tr class="bg-navy-900 text-gray-300 text-[11px] tracking-wide"><th class="w-[50px] py-2 text-center font-bold border-r border-navy-700">予想</th><th class="w-[34px] py-2 text-center font-bold border-r border-navy-700 hidden md:table-cell">枠</th><th class="w-[34px] py-2 text-center font-bold border-r border-navy-700">番</th><th class="py-2 px-2 text-left font-bold border-r border-navy-700 min-w-[90px] sm:min-w-[130px]">馬名</th><th class="w-[40px] py-2 text-center font-bold border-r border-navy-700 hidden md:table-cell">性齢</th><th class="w-[40px] py-2 text-center font-bold border-r border-navy-700 hidden md:table-cell">斤量</th><th class="py-2 px-2 text-left font-bold border-r border-navy-700 hidden sm:table-cell">騎手</th><th class="py-2 px-2 text-left font-bold border-r border-navy-700 hidden lg:table-cell">調教師</th><th class="w-[54px] py-2 text-center font-bold border-r border-navy-700 hidden sm:table-cell">オッズ</th><th class="w-[36px] py-2 text-center font-bold border-r border-navy-700 hidden sm:table-cell">人気</th><th class="w-[54px] py-2 text-center font-bold text-gold-400">Score</th></tr></thead><tbody>`;
+  sorted.forEach((entry,idx)=>{const pred=p.find(x=>x.horseNumber===entry.horseNumber);const mark=pred?.mark||"";const score=pred?.score||0;const ms=MS[mark]||MS[""];const stripe=idx%2===0?"bg-white":"bg-gray-50";const fc=FC[entry.frameNumber]||FC[1];const isExp=expH===entry.horseNumber;
+  h+=`<tr class="${entry.isScratched?'opacity-40':''} ${mark?ms.bg:stripe} border-b border-gray-100 hover:bg-amber-50/30 transition-colors">`;
+  h+=`<td class="py-1.5 text-center">${mark?`<div class="flex flex-col items-center leading-none"><span class="${ms.t} font-black text-lg leading-none">${mark}</span><span class="text-[8px] text-gray-400 mt-0.5">${ms.l}</span></div>`:'<span class="text-gray-200">-</span>'}</td>`;
+  h+=`<td class="py-1.5 text-center border-r border-gray-50 hidden md:table-cell"><span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black" style="background:${fc.bg};color:${fc.text};border:2px solid ${fc.border}">${entry.frameNumber}</span></td>`;
+  h+=`<td class="py-1.5 text-center font-black text-sm text-gray-800 border-r border-gray-50">${entry.horseNumber}</td>`;
+  h+=`<td class="py-1.5 px-2 border-r border-gray-50 ${entry.isScratched?'line-through text-gray-400':''}"><span class="font-bold text-[12px] text-gray-900">${entry.horseName}</span></td>`;
+  h+=`<td class="py-1.5 text-center text-[11px] text-gray-500 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':entry.age||''}</td>`;
+  h+=`<td class="py-1.5 text-center text-[11px] text-gray-600 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':(entry.weightCarried?entry.weightCarried.toFixed(1):'')}</td>`;
+  h+=`<td class="py-1.5 px-2 text-[12px] font-bold text-gray-700 border-r border-gray-50 hidden sm:table-cell">${entry.isScratched?'—':entry.jockeyName||''}</td>`;
+  h+=`<td class="py-1.5 px-2 text-[11px] text-gray-400 border-r border-gray-50 hidden lg:table-cell">${entry.isScratched?'—':entry.trainerName||''}</td>`;
+  h+=`<td class="py-1.5 text-center border-r border-gray-50 hidden sm:table-cell">${entry.isScratched||entry.odds==null?'<span class="text-gray-200">-</span>':`<span class="font-black text-[12px] ${oddC(entry.popularity)}">${entry.odds.toFixed(1)}</span>`}</td>`;
+  h+=`<td class="py-1.5 text-center border-r border-gray-50 hidden sm:table-cell">${entry.isScratched||entry.popularity==null?'<span class="text-gray-200">-</span>':`<span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[9px] font-black ${popC(entry.popularity)}">${entry.popularity}</span>`}</td>`;
+  h+=`<td class="py-1.5 text-center ${entry.isScratched?'':'cursor-pointer hover:bg-amber-50'} transition-colors" ${entry.isScratched?'':`onclick="expH=expH===${entry.horseNumber}?null:${entry.horseNumber};renderTable()"`}>`;
+  if(entry.isScratched){h+='<span class="text-gray-200">-</span>';}else{h+=`<div class="flex flex-col items-center gap-0.5"><span class="font-mono font-bold ${mark?'text-sm text-navy-900':'text-[11px] text-gray-500'}">${score.toFixed(1)}</span><div class="w-10 h-2 bg-gray-200 rounded-full overflow-hidden"><div class="h-full rounded-full bg-gradient-to-r ${sColor(score)}" style="width:${Math.min(score*1.2,100)}%"></div></div><svg class="w-2.5 h-2.5 text-gray-300 ${isExp?'rotate-180':''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></div>`;}
+  h+='</td></tr>';
+  if(isExp&&pred?.factors){h+=renderFP(pred.factors,entry.horseName);}
+  });
+  h+='</tbody></table></div></div>';
+  document.getElementById('racecard').innerHTML=h;
+}
+
+function renderBets(){
+  const bets=dB;if(!bets||!bets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';return;}
+  const rc=["from-gold-400 to-gold-600","from-gray-300 to-gray-400","from-amber-300 to-amber-500","from-gray-200 to-gray-300","from-gray-200 to-gray-300"];
+  const tc={tansho:"bg-red-100 text-red-700",fukusho:"bg-blue-100 text-blue-700",umaren:"bg-purple-100 text-purple-700",wide:"bg-teal-100 text-teal-700",sanrenpuku:"bg-emerald-100 text-emerald-700",sanrentan:"bg-orange-100 text-orange-700"};
+  let h='';
+  bets.forEach((b,i)=>{
+    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'?'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
+    const ev=b.ev||0;const evC=ev>0?"bg-emerald-100 text-emerald-700 border border-emerald-200":ev>-0.1?"bg-amber-100 text-amber-700 border border-amber-200":"bg-gray-100 text-gray-500 border border-gray-200";
+    const hasOdds=b.odds&&b.odds>0;
+    const evLabel=hasOdds?`EV ${ev>0?'+':''}${(ev*100).toFixed(0)}%`:'Score推奨';
+    h+=`<div class="px-4 py-2.5 ${i===0?'bg-gradient-to-r from-amber-50 to-white border-l-4 border-l-gold-500':''}"><div class="flex items-start gap-2.5"><span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b ${rc[i]||rc[4]} text-white text-[10px] font-black shadow">${b.rank||i+1}</span><div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 flex-wrap mb-0.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-black ${tc[b.type]||'bg-gray-100'}">${b.typeLabel||b.type}</span>${names.join('<span class="text-gray-300 text-[10px]">-</span>')}</div><div class="flex items-center gap-2.5 text-[11px]"><span class="${evC} px-1.5 py-0.5 rounded font-bold">${evLabel}</span>${hasOdds?`<span class="text-amber-700 font-bold">${b.odds.toFixed?b.odds.toFixed(1):b.odds}倍</span>`:'<span class="text-gray-300">オッズ未確定</span>'}${b.hitProb&&b.hitProb>0?`<span class="text-gray-400">的中${(b.hitProb*100).toFixed(1)}%</span>`:''}</div></div></div></div>`;
+  });
+  // Longshot (穴場券)
+  if(dLongshot){
+    const b=dLongshot;
+    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'?'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
+    const odds_b=b.odds||0;
+    h+=`<div class="border-t-2 border-dashed border-amber-300 mx-3"></div>
+    <div class="px-4 py-3 bg-gradient-to-r from-amber-50/80 to-white">
+      <div class="flex items-start gap-2.5">
+        <span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b from-amber-400 to-amber-600 text-white text-[8px] font-black shadow">穴</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1.5 flex-wrap mb-0.5">
+            <span class="px-1.5 py-0.5 rounded text-[9px] font-black bg-amber-100 text-amber-800 border border-amber-200">穴場券</span>
+            <span class="px-1.5 py-0.5 rounded text-[10px] font-black ${tc[b.type]||'bg-gray-100'}">${b.typeLabel||b.type}</span>
+            ${names.join('<span class="text-gray-300 text-[10px]">-</span>')}
+          </div>
+          <div class="flex items-center gap-2.5 text-[11px]">
+            ${odds_b?`<span class="text-amber-700 font-bold">${odds_b.toFixed?odds_b.toFixed(1):odds_b}倍</span>`:''}
+            ${b.hitProb&&b.hitProb>0?`<span class="text-gray-400">的中${(b.hitProb*100).toFixed(1)}%</span>`:''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  document.getElementById('bets').innerHTML=h;
+}
+
+init();
+
+// Auto-refresh: race list every 10 minutes
+setInterval(() => {
+  scheduleCache = {};
+  loadAndRenderDay(activeDate);
+}, 10 * 60 * 1000);
+
+// Auto-refresh: detail page odds every 60 seconds (when viewing a race)
+let _currentDetailId = null;
+const _origShowDetail = showDetail;
+showDetail = function(raceId) {
+  _currentDetailId = raceId;
+  _origShowDetail(raceId);
+};
+const _origShowList = showList;
+showList = function() {
+  _currentDetailId = null;
+  _origShowList();
+};
+setInterval(() => {
+  if (_currentDetailId && document.getElementById("page-detail").classList.contains("active")) {
+    // Silently refresh odds only (don't reload whole page)
+    fetch(`${API}/racecard/${_currentDetailId}?_t=${Date.now()}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return;
+        // Update odds display in table without changing predictions
+        dE = data.entries;
+        // Re-render table with updated odds but keep existing predictions
+        renderTable();
+      })
+      .catch(() => {});
+  }
+}, 60 * 1000);
+</script>
+</body>
+</html>
