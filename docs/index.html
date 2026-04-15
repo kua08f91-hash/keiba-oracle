@@ -63,10 +63,30 @@ let weekData=[], activeDate="", scheduleCache={};
 function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
 function showDetail(raceId){document.getElementById("page-list").classList.remove("active");document.getElementById("page-detail").classList.add("active");window.scrollTo(0,0);loadRaceDetail(raceId);}
 
+let staticData = null; // Pre-exported predictions JSON
+
 async function init(){
-  document.getElementById("apiStatus").textContent="Connecting...";
+  document.getElementById("apiStatus").textContent="Loading...";
+
+  // Try static JSON first (GitHub Pages), then fallback to API
+  try {
+    const base = window.location.href.replace(/\/[^/]*$/, '');
+    const r = await fetch(`${base}/data/predictions.json?_t=${Date.now()}`);
+    if (r.ok) {
+      staticData = await r.json();
+      weekData = staticData.map(d => ({date: d.date, display: d.display, weekLabel: "", courses: d.courses.map(c=>c.name)}));
+      document.getElementById("apiStatus").textContent="";
+      const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const future=weekData.filter(d=>d.date>=today);
+      activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+      renderDateTabs();loadAndRenderDay(activeDate);
+      return;
+    }
+  } catch(e) {}
+
+  // Fallback: live API
   try{const r=await fetch(`${API}/race-dates?weeks=3`);if(!r.ok)throw 0;weekData=await r.json();document.getElementById("apiStatus").textContent="";}
-  catch(e){document.getElementById("apiStatus").innerHTML='<span class="text-red-400">Backend offline</span> — <code class="bg-gray-200 px-1 rounded text-gray-600">python3 -m uvicorn backend.main:app --port 8000</code>';return;}
+  catch(e){document.getElementById("apiStatus").innerHTML='<span class="text-gray-400">データを読み込めません</span>';return;}
   if(!weekData.length){document.getElementById("raceList").innerHTML='<div class="bg-white rounded-xl shadow text-center py-16 text-gray-400 font-bold">No races found</div>';return;}
   const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
   const future=weekData.filter(d=>d.date>=today);
@@ -97,6 +117,16 @@ async function loadAndRenderDay(ds){
   const el=document.getElementById("raceList");
   if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
   el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
+
+  // Try static data first
+  if(staticData){
+    const dayData=staticData.find(d=>d.date===ds);
+    if(dayData){
+      const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>({raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,startTime:r.raceInfo?.startTime||""}))}));
+      scheduleCache[ds]=sc;renderDay(sc,ds);return;
+    }
+  }
+  // Fallback: API
   try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`);const data=await r.json();
     const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
     scheduleCache[ds]=sc;renderDay(sc,ds);
@@ -213,6 +243,24 @@ async function loadRaceDetail(id){
   const el=document.getElementById("detail-content");
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
+
+  // Try static data first
+  if(staticData){
+    for(const day of staticData){
+      for(const course of day.courses){
+        const race=course.races.find(r=>r.raceId===id);
+        if(race){
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          renderDetail(race.raceInfo,race.pattern||"");
+          const pb=document.getElementById("detail-pattern");
+          if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
+          renderBets();return;
+        }
+      }
+    }
+  }
+
+  // Fallback: API
   try{
     const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`);if(!cr.ok)throw Error("Not found");
     const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
