@@ -1,83 +1,75 @@
-"""Optimize analytical factor weights to maximize prediction accuracy.
+"""Optimize v5 analytical factor weights using historical race results.
 
-Tests many weight combinations against actual 3/28 + 3/29 race results.
-Goal: Find the weight distribution that maximizes win rate WITHOUT relying on market odds.
+Uses scipy differential_evolution to find the 12 factor weights + market
+blend ratio that maximize prediction accuracy on historical data.
 
-Strategy:
-- Market weight should be LOW (AI should predict independently)
-- Test many analytical weight distributions
-- Evaluate on: 単勝, 複勝, ワイド, 馬連, 3連複 hit rates
-- Combined metric: weighted sum of hit rates
+Usage:
+    /usr/bin/python3 -m backend.optimize_weights
+
+Output:
+    data/optimized_weights.json — loaded by MLScoringModel on startup
 """
-import requests
-import time
-import itertools
-import random
+from __future__ import annotations
+
 import json
-from bs4 import BeautifulSoup
-
-API_BASE = "http://localhost:8000/api"
-NETKEIBA_BASE = "https://race.netkeiba.com/race"
-
-# Import factor calculators directly
+import os
 import sys
-sys.path.insert(0, "/Users/atsushi.furutani/Claude Code/jra-prediction-app")
+import time
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scipy.optimize import differential_evolution
+import numpy as np
+
+from backend.database.db import init_db
+from backend.predictor.scoring import ANALYTICAL_WEIGHTS, MARKET_WEIGHT
 from backend.predictor.factors import (
     calc_market_score, calc_course_affinity, calc_distance_aptitude,
     calc_age_and_sex, calc_weight_carried, calc_jockey_ability,
     calc_trainer_ability, calc_horse_weight_change, calc_past_performance,
     calc_track_condition_affinity, calc_track_direction, calc_track_specific,
+    calc_form_trend, calc_same_distance_performance,
+    calc_same_surface_performance, calc_same_condition_performance,
+    calc_running_style_consistency, calc_speed_figure,
+    calc_weight_carried_trend, calc_days_since_last_race,
 )
 
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+HISTORY_PATH = os.path.join(DATA_DIR, "historical_races.json")
+OUTPUT_PATH = os.path.join(DATA_DIR, "optimized_weights.json")
 
-def fetch_actual_results(race_id: str) -> dict:
-    """Fetch actual race results from netkeiba result page."""
-    url = f"{NETKEIBA_BASE}/result.html?race_id={race_id}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.encoding = "EUC-JP"
-        soup = BeautifulSoup(resp.text, "html.parser")
-        results = {}
-        table = soup.select_one("table.RaceTable01")
-        if not table:
-            return {}
-        rows = table.select("tr.HorseList")
-        for rank_idx, row in enumerate(rows):
-            tds = row.select("td")
-            if len(tds) < 3:
-                continue
-            pos_text = tds[0].get_text(strip=True)
-            try:
-                finish_pos = int(pos_text)
-            except:
-                continue
-            try:
-                horse_num = int(tds[2].get_text(strip=True))
-            except:
-                continue
-            results[horse_num] = finish_pos
-        return results
-    except:
-        return {}
+FACTOR_KEYS = list(ANALYTICAL_WEIGHTS.keys())
 
 
-def compute_scores(race_data, entries, analytical_weights, market_weight, analytical_weight_total):
-    """Compute prediction scores with given weights."""
-    surface = race_data.get("surface", "芝")
-    distance = race_data.get("distance", 2000)
-    head_count = len([e for e in entries if not e.get("isScratched")])
-    all_weights_list = [e.get("weightCarried", 0) for e in entries if not e.get("isScratched")]
-    track_condition = race_data.get("trackCondition", "")
-    course_detail = race_data.get("courseDetail", "")
-    racecourse_code = race_data.get("racecourseCode", "")
+def load_races():
+    """Load historical races with results."""
+    if not os.path.exists(HISTORY_PATH):
+        print(f"No historical data at {HISTORY_PATH}")
+        return []
+    with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+        races = json.load(f)
+    valid = [r for r in races if r.get("results") and r.get("entries") and len(r["entries"]) >= 5]
+    return valid
 
-    scored = []
-    for entry in entries:
-        if entry.get("isScratched"):
-            continue
 
+def compute_factors_for_race(race):
+    """Compute all 12 factor scores for each entry in a race."""
+    entries = race["entries"]
+    race_info = race.get("race_info", {})
+    surface = race_info.get("surface", "芝")
+    distance = race_info.get("distance", 2000)
+    track_condition = race_info.get("trackCondition", "")
+    course_detail = race_info.get("courseDetail", "")
+    racecourse_code = race_info.get("racecourseCode", "")
+
+    active = [e for e in entries if not e.get("isScratched")]
+    all_weights = [e.get("weightCarried", 0) for e in active]
+
+    factor_data = []
+    for entry in active:
         sire = entry.get("sireName", "")
+        bms = entry.get("broodmareSire", "")
         jockey = entry.get("jockeyName", "")
         trainer = entry.get("trainerName", "")
         age_str = entry.get("age", "")
@@ -87,329 +79,191 @@ def compute_scores(race_data, entries, analytical_weights, market_weight, analyt
         horse_weight = entry.get("horseWeight", "")
         past_races = entry.get("pastRaces", [])
 
+        race_date_norm = ""
+        rd = race_info.get("date", "")
+        if rd and len(rd) == 8 and rd.isdigit():
+            race_date_norm = f"{rd[:4]}.{rd[4:6]}.{rd[6:]}"
+
         factors = {
-            "marketScore": calc_market_score(odds, popularity, head_count),
-            "pastPerformance": calc_past_performance(past_races),
+            "trackDirection": calc_track_direction(past_races, course_detail, distance),
+            "trackCondition": calc_track_condition_affinity(sire, track_condition, bms),
+            "trackSpecific": calc_track_specific(past_races, racecourse_code),
             "jockeyAbility": calc_jockey_ability(jockey),
+            "sameDistance": calc_same_distance_performance(past_races, distance),
+            "sameSurface": calc_same_surface_performance(past_races, surface),
+            "sameCondition": calc_same_condition_performance(past_races, track_condition),
+            "pastPerformance": calc_past_performance(past_races),
+            "speedFigure": calc_speed_figure(past_races, distance),
+            "runningStyle": calc_running_style_consistency(past_races),
+            "daysSinceLast": calc_days_since_last_race(past_races, race_date_norm),
+            "weightCarriedTrend": calc_weight_carried_trend(past_races, weight),
+            "formTrend": calc_form_trend(past_races),
+            "ageAndSex": calc_age_and_sex(age_str),
+            "weightCarried": calc_weight_carried(weight, all_weights),
+            "horseWeightChange": calc_horse_weight_change(horse_weight),
+            "trainerAbility": calc_trainer_ability(trainer),
             "courseAffinity": calc_course_affinity(sire, surface),
             "distanceAptitude": calc_distance_aptitude(sire, distance),
-            "trainerAbility": calc_trainer_ability(trainer),
-            "trackCondition": calc_track_condition_affinity(sire, track_condition),
-            "trackDirection": calc_track_direction(past_races, course_detail),
-            "trackSpecific": calc_track_specific(past_races, racecourse_code),
-            "ageAndSex": calc_age_and_sex(age_str),
-            "weightCarried": calc_weight_carried(weight, all_weights_list),
-            "horseWeightChange": calc_horse_weight_change(horse_weight),
         }
+        market = calc_market_score(odds, popularity, len(active))
 
-        # Analytical score
-        analytical = sum(
-            factors[k] * analytical_weights.get(k, 0)
-            for k in analytical_weights
-        )
-
-        market = factors["marketScore"]
-
-        # Final score: blend
-        final_score = market * market_weight + analytical * analytical_weight_total
-
-        scored.append({
-            "horseNumber": entry["horseNumber"],
-            "score": final_score,
+        factor_data.append({
+            "horseNumber": entry.get("horseNumber", 0),
+            "factors": factors,
+            "market": market,
         })
 
-    scored.sort(key=lambda x: -x["score"])
-    return scored
+    return factor_data
 
 
-def evaluate(scored, actual_results):
-    """Evaluate prediction against actual results."""
-    if not actual_results or len(scored) < 3:
-        return None
+def score_with_weights(factor_data, weights_vec):
+    """Score horses using given weight vector. [12 factor weights, market_weight]"""
+    n = len(FACTOR_KEYS)
+    factor_weights = {k: w for k, w in zip(FACTOR_KEYS, weights_vec[:n])}
+    market_w = weights_vec[n]
+    analytical_w = 1.0 - market_w
 
-    sorted_actual = sorted(actual_results.items(), key=lambda x: x[1])
-    winner = sorted_actual[0][0]
-    top2 = set(h for h, _ in sorted_actual[:2])
-    top3 = set(h for h, _ in sorted_actual[:3])
+    scores = []
+    for fd in factor_data:
+        analytical = sum(fd["factors"][k] * factor_weights[k] for k in FACTOR_KEYS)
+        score = analytical * analytical_w + fd["market"] * market_w
+        scores.append((fd["horseNumber"], score))
 
-    ai_top1 = scored[0]["horseNumber"]
-    ai_top2 = set(s["horseNumber"] for s in scored[:2])
-    ai_top3 = set(s["horseNumber"] for s in scored[:3])
-    ai_top5 = set(s["horseNumber"] for s in scored[:5])
-    ai_top6 = set(s["horseNumber"] for s in scored[:6])
-
-    return {
-        "tansho": ai_top1 == winner,
-        "fukusho": len(ai_top3 & top3) >= 1,
-        "umaren": ai_top2 == top2,
-        "wide": len(ai_top3 & top3) >= 2,
-        "sanrenpuku": ai_top3 == top3,
-        "winner_in_top3": winner in ai_top3,
-        "winner_in_top6": winner in ai_top6,
-        "top3_coverage": len(ai_top6 & top3),
-    }
+    return sorted(scores, key=lambda x: -x[1])
 
 
-def collect_race_data():
-    """Collect all race data and actual results for optimization."""
-    print("Collecting race data for 3/28 and 3/29...")
-    all_races = []
+def evaluate_weights(weights_vec, races_data):
+    """Evaluate weights by top-1 + top-3 prediction accuracy."""
+    top1_hits = 0
+    top3_hits = 0
+    total = 0
 
-    for date in ["20260328", "20260329"]:
-        resp = requests.get(f"{API_BASE}/race-list?date={date}")
-        schedules = resp.json()
-
-        for schedule in schedules:
-            for race in schedule.get("races", []):
-                race_id = race.get("race_id", race.get("raceId", ""))
-                race_num = race.get("race_number", race.get("raceNumber", 0))
-
-                # Get race card data
-                try:
-                    card_resp = requests.get(f"{API_BASE}/racecard/{race_id}", timeout=30)
-                    card_data = card_resp.json()
-                except:
-                    continue
-                time.sleep(0.5)
-
-                # Get actual results
-                actual = fetch_actual_results(race_id)
-                if not actual:
-                    time.sleep(0.5)
-                    continue
-                time.sleep(0.5)
-
-                all_races.append({
-                    "race_id": race_id,
-                    "race_num": race_num,
-                    "date": date,
-                    "course": schedule["name"],
-                    "race_info": card_data.get("raceInfo", {}),
-                    "entries": card_data.get("entries", []),
-                    "actual": actual,
-                })
-                print(f"  Collected: {schedule['name']} {race_num}R ({date})")
-
-    print(f"\nTotal races collected: {len(all_races)}")
-    return all_races
-
-
-def test_weights(all_races, analytical_weights, market_weight, analytical_weight_total):
-    """Test a specific weight configuration across all races."""
-    totals = {
-        "races": 0, "tansho": 0, "fukusho": 0, "umaren": 0,
-        "wide": 0, "sanrenpuku": 0, "winner_in_top3": 0,
-        "winner_in_top6": 0, "top3_coverage": 0,
-    }
-
-    for race in all_races:
-        scored = compute_scores(
-            race["race_info"], race["entries"],
-            analytical_weights, market_weight, analytical_weight_total
-        )
-        result = evaluate(scored, race["actual"])
-        if result is None:
+    for race_factors, winners in races_data:
+        if not race_factors or not winners:
             continue
 
-        totals["races"] += 1
-        for key in ["tansho", "fukusho", "umaren", "wide", "sanrenpuku", "winner_in_top3", "winner_in_top6"]:
-            if result[key]:
-                totals[key] += 1
-        totals["top3_coverage"] += result["top3_coverage"]
+        ranked = score_with_weights(race_factors, weights_vec)
+        if len(ranked) < 3:
+            continue
 
-    return totals
+        top3_predicted = [h for h, _ in ranked[:3]]
+        winner = winners[0]
+
+        total += 1
+        if top3_predicted[0] == winner:
+            top1_hits += 1
+        if winner in top3_predicted:
+            top3_hits += 1
+
+    if total == 0:
+        return 0.0
+
+    # 40% top-1 + 60% top-3 (top-3 matters more for ワイド/3連系)
+    return 0.4 * (top1_hits / total) + 0.6 * (top3_hits / total)
 
 
-def composite_score(totals):
-    """Compute a composite score that values practical betting outcomes.
-
-    Weights: 単勝(25%) + ワイド(25%) + 馬連(20%) + 3連複(15%) + 複勝(10%) + Top3率(5%)
-    """
-    n = max(totals["races"], 1)
-    return (
-        (totals["tansho"] / n) * 0.25 +
-        (totals["wide"] / n) * 0.25 +
-        (totals["umaren"] / n) * 0.20 +
-        (totals["sanrenpuku"] / n) * 0.15 +
-        (totals["fukusho"] / n) * 0.10 +
-        (totals["winner_in_top3"] / n) * 0.05
-    )
+def objective(weights_vec, races_data):
+    """Minimization objective (negate for maximization)."""
+    n = len(FACTOR_KEYS)
+    factor_w = np.abs(weights_vec[:n])
+    total_fw = factor_w.sum()
+    if total_fw > 0:
+        factor_w = factor_w / total_fw
+    market_w = np.clip(weights_vec[n], 0.0, 0.30)
+    normalized = np.concatenate([factor_w, [market_w]])
+    return -evaluate_weights(normalized, races_data)
 
 
 def main():
-    # Collect data
-    all_races = collect_race_data()
-    if len(all_races) < 10:
-        print("Not enough races for optimization")
+    init_db()
+    print("=" * 60, flush=True)
+    print("  v5 Weight Optimizer", flush=True)
+    print("=" * 60, flush=True)
+
+    print("\nLoading historical races...", flush=True)
+    races = load_races()
+    print(f"  {len(races)} races with results", flush=True)
+
+    if len(races) < 50:
+        print("Not enough data (need >= 50 races).")
         return
 
-    # Define factor keys for analytical weights
-    factor_keys = [
-        "pastPerformance", "jockeyAbility", "courseAffinity", "distanceAptitude",
-        "trainerAbility", "trackCondition", "trackDirection", "trackSpecific",
-        "ageAndSex", "weightCarried", "horseWeightChange",
-    ]
+    print("Computing factors...", flush=True)
+    races_data = []
+    for race in races:
+        factors = compute_factors_for_race(race)
+        results_data = race.get("results", [])
+        winners = []
+        if isinstance(results_data, dict) and results_data:
+            # Dict format: {horse_number_str: finish_position}
+            sorted_pairs = sorted(results_data.items(), key=lambda x: x[1])
+            winners = [int(hn) for hn, pos in sorted_pairs[:3]]
+        elif isinstance(results_data, list) and results_data:
+            if isinstance(results_data[0], dict):
+                winners = [r.get("horseNumber", 0) for r in
+                          sorted(results_data, key=lambda r: r.get("finishPosition", 99))[:3]]
+            else:
+                winners = results_data[:3]
+        if factors and winners:
+            races_data.append((factors, winners))
 
-    # =========================================================================
-    # Phase 1: Test market weight levels (0%, 10%, 15%, 20%, 25%, 30%)
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("Phase 1: Finding optimal market vs analytical balance")
-    print("=" * 70)
+    print(f"  {len(races_data)} races ready for optimization", flush=True)
 
-    # Current analytical weights (normalized to sum to 1.0)
-    base_analytical = {
-        "pastPerformance": 0.22,
-        "jockeyAbility": 0.18,
-        "courseAffinity": 0.12,
-        "distanceAptitude": 0.10,
-        "trainerAbility": 0.10,
-        "trackCondition": 0.08,
-        "trackDirection": 0.06,
-        "trackSpecific": 0.06,
-        "ageAndSex": 0.04,
-        "weightCarried": 0.02,
-        "horseWeightChange": 0.02,
+    x0 = np.array([ANALYTICAL_WEIGHTS[k] for k in FACTOR_KEYS] + [MARKET_WEIGHT])
+    current_score = -objective(x0, races_data)
+    print(f"\nCurrent weights score: {current_score:.4f}", flush=True)
+
+    print("\nOptimizing (differential evolution)...", flush=True)
+    n = len(FACTOR_KEYS)
+    bounds = [(0.0, 0.30)] * n + [(0.0, 0.30)]
+
+    result = differential_evolution(
+        objective,
+        bounds,
+        args=(races_data,),
+        seed=42,
+        maxiter=200,
+        tol=1e-6,
+        polish=True,
+    )
+
+    opt_factors = np.abs(result.x[:n])
+    opt_factors = opt_factors / opt_factors.sum()
+    opt_market = np.clip(result.x[n], 0.0, 0.30)
+    opt_score = -result.fun
+
+    print(f"\nOptimized score: {opt_score:.4f} (was {current_score:.4f}, Δ{opt_score-current_score:+.4f})", flush=True)
+
+    opt_weights = {k: round(float(v), 4) for k, v in zip(FACTOR_KEYS, opt_factors)}
+    output = {
+        "version": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "analytical_weights": opt_weights,
+        "market_weight": round(float(opt_market), 4),
+        "score_before": round(current_score, 4),
+        "score_after": round(opt_score, 4),
+        "improvement": round(opt_score - current_score, 4),
+        "n_races": len(races_data),
+        "optimized_at": datetime.now().isoformat(),
     }
 
-    best_market_weight = 0
-    best_score = -1
-    market_results = {}
+    print(f"\n  --- Optimized Weights ---", flush=True)
+    for k, v in opt_weights.items():
+        prev = ANALYTICAL_WEIGHTS[k]
+        delta = v - prev
+        marker = "▲" if delta > 0.01 else ("▼" if delta < -0.01 else " ")
+        print(f"  {marker} {k:20s}: {prev:.4f} → {v:.4f} ({delta:+.4f})", flush=True)
+    print(f"  {'─'*50}", flush=True)
+    print(f"    market_weight:      {MARKET_WEIGHT:.4f} → {opt_market:.4f}", flush=True)
 
-    for mw_pct in [0, 5, 10, 15, 20, 25, 30, 35, 40]:
-        mw = mw_pct / 100.0
-        aw = 1.0 - mw
-        totals = test_weights(all_races, base_analytical, mw, aw)
-        score = composite_score(totals)
-        n = totals["races"]
+    if opt_score > current_score:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+        print(f"\n  Saved to {OUTPUT_PATH}", flush=True)
+    else:
+        print(f"\n  No improvement — weights NOT saved", flush=True)
 
-        market_results[mw_pct] = totals
-
-        print(f"\n  Market={mw_pct}% Analytical={100-mw_pct}%:")
-        print(f"    単勝: {totals['tansho']}/{n} ({totals['tansho']/n*100:.1f}%) "
-              f"複勝: {totals['fukusho']}/{n} ({totals['fukusho']/n*100:.1f}%) "
-              f"馬連: {totals['umaren']}/{n} ({totals['umaren']/n*100:.1f}%)")
-        print(f"    ワイド: {totals['wide']}/{n} ({totals['wide']/n*100:.1f}%) "
-              f"3連複: {totals['sanrenpuku']}/{n} ({totals['sanrenpuku']/n*100:.1f}%) "
-              f"Top3: {totals['winner_in_top3']}/{n} ({totals['winner_in_top3']/n*100:.1f}%)")
-        print(f"    Composite: {score:.4f}")
-
-        if score > best_score:
-            best_score = score
-            best_market_weight = mw_pct
-
-    print(f"\n  >>> Best market weight: {best_market_weight}%")
-
-    # =========================================================================
-    # Phase 2: Optimize individual analytical factor weights
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("Phase 2: Optimizing individual factor weights")
-    print("=" * 70)
-
-    mw = best_market_weight / 100.0
-    aw = 1.0 - mw
-
-    # Test many random weight distributions
-    best_weights = dict(base_analytical)
-    best_composite = composite_score(test_weights(all_races, best_weights, mw, aw))
-    print(f"\n  Baseline composite: {best_composite:.4f}")
-
-    # Random search with constraints
-    random.seed(42)
-    num_trials = 500
-
-    for trial in range(num_trials):
-        # Generate random weights
-        raw = {}
-        for k in factor_keys:
-            # Use base weight as center, with some random variation
-            base = base_analytical[k]
-            raw[k] = max(0.01, base + random.gauss(0, base * 0.5))
-
-        # Normalize to sum to 1.0
-        total = sum(raw.values())
-        weights = {k: v / total for k, v in raw.items()}
-
-        totals = test_weights(all_races, weights, mw, aw)
-        score = composite_score(totals)
-
-        if score > best_composite:
-            best_composite = score
-            best_weights = dict(weights)
-            n = totals["races"]
-            print(f"\n  Trial {trial}: NEW BEST composite={score:.4f}")
-            print(f"    単勝: {totals['tansho']}/{n} ({totals['tansho']/n*100:.1f}%) "
-                  f"馬連: {totals['umaren']}/{n} ({totals['umaren']/n*100:.1f}%) "
-                  f"ワイド: {totals['wide']}/{n} ({totals['wide']/n*100:.1f}%) "
-                  f"3連複: {totals['sanrenpuku']}/{n} ({totals['sanrenpuku']/n*100:.1f}%)")
-
-    # =========================================================================
-    # Phase 3: Fine-tune around the best found weights
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("Phase 3: Fine-tuning best weights")
-    print("=" * 70)
-
-    for trial in range(300):
-        raw = {}
-        for k in factor_keys:
-            base = best_weights[k]
-            raw[k] = max(0.01, base + random.gauss(0, base * 0.2))
-
-        total = sum(raw.values())
-        weights = {k: v / total for k, v in raw.items()}
-
-        totals = test_weights(all_races, weights, mw, aw)
-        score = composite_score(totals)
-
-        if score > best_composite:
-            best_composite = score
-            best_weights = dict(weights)
-            n = totals["races"]
-            print(f"\n  Fine-tune {trial}: NEW BEST composite={score:.4f}")
-            print(f"    単勝: {totals['tansho']}/{n} ({totals['tansho']/n*100:.1f}%) "
-                  f"馬連: {totals['umaren']}/{n} ({totals['umaren']/n*100:.1f}%) "
-                  f"ワイド: {totals['wide']}/{n} ({totals['wide']/n*100:.1f}%) "
-                  f"3連複: {totals['sanrenpuku']}/{n} ({totals['sanrenpuku']/n*100:.1f}%)")
-
-    # =========================================================================
-    # Final Results
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("FINAL OPTIMAL WEIGHTS")
-    print("=" * 70)
-
-    print(f"\nMarket Weight: {best_market_weight}%")
-    print(f"Analytical Weight: {100 - best_market_weight}%")
-    print(f"\nAnalytical Factor Breakdown (sum = 1.0):")
-
-    # Sort by weight descending
-    sorted_weights = sorted(best_weights.items(), key=lambda x: -x[1])
-    for k, v in sorted_weights:
-        print(f"  {k:25s}: {v:.4f} ({v*100:.1f}%)")
-
-    # Final test
-    totals = test_weights(all_races, best_weights, mw, aw)
-    n = totals["races"]
-    print(f"\nFinal Performance ({n} races):")
-    print(f"  単勝的中率: {totals['tansho']}/{n} ({totals['tansho']/n*100:.1f}%)")
-    print(f"  複勝的中率: {totals['fukusho']}/{n} ({totals['fukusho']/n*100:.1f}%)")
-    print(f"  馬連的中率: {totals['umaren']}/{n} ({totals['umaren']/n*100:.1f}%)")
-    print(f"  ワイド的中率: {totals['wide']}/{n} ({totals['wide']/n*100:.1f}%)")
-    print(f"  3連複的中率: {totals['sanrenpuku']}/{n} ({totals['sanrenpuku']/n*100:.1f}%)")
-    print(f"  勝馬Top3率: {totals['winner_in_top3']}/{n} ({totals['winner_in_top3']/n*100:.1f}%)")
-    print(f"  勝馬Top6率: {totals['winner_in_top6']}/{n} ({totals['winner_in_top6']/n*100:.1f}%)")
-    print(f"  上位3頭カバー率: {totals['top3_coverage']}/{n*3} ({totals['top3_coverage']/(n*3)*100:.1f}%)")
-
-    # Output as Python dict for easy copy
-    print("\n\n# Python code to paste into scoring.py:")
-    print(f"MARKET_WEIGHT = {mw}")
-    print(f"ANALYTICAL_WEIGHT = {aw}")
-    print("ANALYTICAL_WEIGHTS = {")
-    for k, v in sorted_weights:
-        print(f'    "{k}": {v:.4f},')
-    print("}")
+    print(f"\n{'='*60}", flush=True)
 
 
 if __name__ == "__main__":

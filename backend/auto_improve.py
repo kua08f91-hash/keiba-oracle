@@ -332,13 +332,27 @@ def main():
     else:
         print("  Could not evaluate (insufficient data)")
 
-    # Step 4: Retrain if needed
-    print("\n[4/4] Checking if retraining is needed...")
+    # Step 4: Retrain ML model if needed (for validation/future use)
+    print("\n[4/5] Checking if ML retraining is needed...")
     if should_retrain(metrics):
-        print("  → Retraining triggered!")
+        print("  → ML retraining triggered!")
         retrain_model()
     else:
-        print("  → Model performance OK, no retraining needed")
+        print("  → ML model performance OK, no retraining needed")
+
+    # Step 5: Optimize v5 factor weights (real bet_optimizer pipeline + hold-out validation)
+    print("\n[5/5] Optimizing v5 factor weights (real pipeline + hold-out)...")
+    try:
+        from backend.optimize_weights_real import main as optimize_main
+        optimize_main()
+    except Exception as e:
+        print(f"  Real-pipeline optimization failed: {e}")
+        # Fallback chain (prior iterations kept for research)
+        try:
+            from backend.optimize_weights_robust import main as optimize_fallback
+            optimize_fallback()
+        except Exception as e2:
+            print(f"  Fallback optimization also failed: {e2}")
 
     # Summary
     print(f"\n{'='*60}")
