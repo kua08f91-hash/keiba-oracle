@@ -31,3 +31,9 @@ Thumbs.db
 
 # Preview cache
 .pytest_cache/
+
+# Test coverage
+.coverage
+
+# Backup files
+*.json.bak

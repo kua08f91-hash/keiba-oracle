@@ -17,15 +17,21 @@
 <!-- PAGE 1: LIST -->
 <div id="page-list" class="page active">
 <header class="bg-navy-900 text-white shadow-xl sticky top-0 z-10 border-b border-navy-600">
-  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
-    <div class="w-8 h-8 bg-gold-500/20 rounded-lg flex items-center justify-center border border-gold-500/30">
-      <svg class="w-5 h-5 text-gold-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+  <button type="button" onclick="reloadLatest()" title="Click to reload latest data"
+          class="w-full text-left block">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3 hover:bg-navy-800 active:bg-navy-700 transition-colors">
+      <div class="w-8 h-8 bg-gold-500/20 rounded-lg flex items-center justify-center border border-gold-500/30 pointer-events-none">
+        <svg class="w-5 h-5 text-gold-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </div>
+      <div class="pointer-events-none">
+        <h1 class="text-base font-black tracking-widest text-white">KEIBA <span class="text-gold-400">ORACLE</span></h1>
+        <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
+      </div>
+      <svg id="reloadIcon" class="w-4 h-4 text-gold-400/70 ml-auto pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
     </div>
-    <div>
-      <h1 class="text-base font-black tracking-widest text-white">KEIBA <span class="text-gold-400">ORACLE</span></h1>
-      <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
-    </div>
-  </div>
+  </button>
 </header>
 <div class="max-w-6xl mx-auto px-4 py-4 space-y-4">
   <div id="weekTabs"></div>
@@ -44,10 +50,16 @@
       <span class="text-sm font-bold">Back</span>
     </button>
     <div class="h-5 w-px bg-navy-600"></div>
-    <div>
-      <h1 class="text-base font-black tracking-widest">KEIBA <span class="text-gold-400">ORACLE</span></h1>
-      <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
-    </div>
+    <button type="button" onclick="reloadLatest()" title="Click to reload latest data"
+            class="flex items-center gap-2 hover:opacity-80 active:opacity-60 transition text-left">
+      <div class="pointer-events-none">
+        <h1 class="text-base font-black tracking-widest">KEIBA <span class="text-gold-400">ORACLE</span></h1>
+        <p class="text-[9px] text-gray-400 tracking-wider -mt-0.5">AI-POWERED RACING INTELLIGENCE</p>
+      </div>
+      <svg class="w-4 h-4 text-gold-400/70 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+    </button>
   </div>
 </header>
 <div class="max-w-6xl mx-auto px-4 py-4 space-y-4">
@@ -62,6 +74,21 @@ let weekData=[], activeDate="", scheduleCache={};
 
 function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
 function showDetail(raceId){document.getElementById("page-list").classList.remove("active");document.getElementById("page-detail").classList.add("active");window.scrollTo(0,0);loadRaceDetail(raceId);}
+
+// Reload latest state: clear all caches and re-init from the list page
+async function reloadLatest(){
+  const icon=document.getElementById("reloadIcon");
+  if(icon){icon.classList.add("animate-spin");}
+  // Clear all caches
+  staticData=null;
+  scheduleCache={};
+  weekData=[];
+  showList();
+  // Brief delay to show spin animation, then re-init
+  setTimeout(async()=>{
+    try{await init();}finally{if(icon){icon.classList.remove("animate-spin");}}
+  },200);
+}
 
 let staticData = null; // Pre-exported predictions JSON
 
@@ -171,17 +198,27 @@ const GRADE_RACES = {
   ]
 };
 
-function gradeTag(n){
-  // Explicit grade markers
-  if(n.includes("(GI)")||n.includes("（GI）")||n.includes("(G1)"))return`<span class="bg-gradient-to-r from-yellow-500 to-amber-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm">GI</span>`;
-  if(n.includes("(GII)")||n.includes("（GII）")||n.includes("(G2)"))return`<span class="bg-gradient-to-r from-gray-400 to-gray-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GII</span>`;
-  if(n.includes("(GIII)")||n.includes("（GIII）")||n.includes("(G3)"))return`<span class="bg-gradient-to-r from-orange-400 to-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GIII</span>`;
-  // Name-based detection: match from start of race name or exact match
-  // This prevents "富士S" from matching "吾妻小富士S"
+const _BADGE_GI = `<span class="bg-gradient-to-r from-yellow-500 to-amber-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm">GI</span>`;
+const _BADGE_GII = `<span class="bg-gradient-to-r from-gray-400 to-gray-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GII</span>`;
+const _BADGE_GIII = `<span class="bg-gradient-to-r from-orange-400 to-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GIII</span>`;
+
+function gradeTag(n, gradeHint){
+  // Priority 1: grade from raceInfo (netkeiba-sourced, most reliable)
+  if(gradeHint){
+    const g = String(gradeHint).toUpperCase();
+    if(g === "GI" || g === "G1" || g === "1") return _BADGE_GI;
+    if(g === "GII" || g === "G2" || g === "2") return _BADGE_GII;
+    if(g === "GIII" || g === "G3" || g === "3") return _BADGE_GIII;
+  }
+  // Priority 2: explicit grade markers in race name
+  if(n.includes("(GI)")||n.includes("(G1)")||n.includes("G1)")||n.includes("GI)"))return _BADGE_GI;
+  if(n.includes("(GII)")||n.includes("(G2)")||n.includes("G2)")||n.includes("GII)"))return _BADGE_GII;
+  if(n.includes("(GIII)")||n.includes("(G3)")||n.includes("G3)")||n.includes("GIII)"))return _BADGE_GIII;
+  // Priority 3: Name-based detection
   function _gradeMatch(name,key){return name===key||name.startsWith(key);}
-  for(const key of GRADE_RACES["GI"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-yellow-500 to-amber-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded shadow-sm">GI</span>`;}
-  for(const key of GRADE_RACES["GII"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-gray-400 to-gray-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GII</span>`;}
-  for(const key of GRADE_RACES["GIII"]){if(_gradeMatch(n,key))return`<span class="bg-gradient-to-r from-orange-400 to-orange-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded">GIII</span>`;}
+  for(const key of GRADE_RACES["GI"]){if(_gradeMatch(n,key))return _BADGE_GI;}
+  for(const key of GRADE_RACES["GII"]){if(_gradeMatch(n,key))return _BADGE_GII;}
+  for(const key of GRADE_RACES["GIII"]){if(_gradeMatch(n,key))return _BADGE_GIII;}
   return"";
 }
 
@@ -192,16 +229,21 @@ function renderDay(schedules,ds){
   const dowC=isSun?'text-red-500':isSat?'text-blue-500':'text-gray-500';
   const cols=schedules.length;
 
+  // Responsive grid: 1 col on mobile, 2 on tablet (md), up to cols on desktop (lg)
+  const gridCls = cols >= 3 ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+                : cols === 2 ? 'grid-cols-1 md:grid-cols-2'
+                : 'grid-cols-1';
+
   el.innerHTML=`<div class="fade-in">
-    <div class="flex items-center gap-3 mb-4">
-      <div class="flex items-baseline gap-1.5 bg-white rounded-xl shadow px-4 py-2.5 border border-gray-200">
-        <span class="text-xl font-black text-navy-900">${parseInt(ds.slice(4,6))}月${parseInt(ds.slice(6,8))}日</span>
-        <span class="text-base font-black ${dowC}">${dow}</span>
+    <div class="flex items-center gap-2 sm:gap-3 mb-4 flex-wrap">
+      <div class="flex items-baseline gap-1.5 bg-white rounded-xl shadow px-3 sm:px-4 py-2 sm:py-2.5 border border-gray-200">
+        <span class="text-lg sm:text-xl font-black text-navy-900">${parseInt(ds.slice(4,6))}月${parseInt(ds.slice(6,8))}日</span>
+        <span class="text-sm sm:text-base font-black ${dowC}">${dow}</span>
       </div>
-      <div class="flex gap-1.5">${schedules.map(s=>`<span class="text-[11px] text-gray-500 bg-white px-2.5 py-1 rounded-lg border border-gray-200 shadow-sm font-medium">${s.name}</span>`).join("")}</div>
-      <div class="flex-1 h-px bg-gray-200"></div>
+      <div class="flex gap-1.5 flex-wrap">${schedules.map(s=>`<span class="text-[11px] text-gray-500 bg-white px-2.5 py-1 rounded-lg border border-gray-200 shadow-sm font-medium">${s.name}</span>`).join("")}</div>
+      <div class="flex-1 h-px bg-gray-200 min-w-[20px]"></div>
     </div>
-    <div class="grid gap-4" style="grid-template-columns:repeat(${Math.min(cols,3)},minmax(0,1fr))">
+    <div class="grid gap-3 sm:gap-4 ${gridCls}">
       ${schedules.map(sc=>`
         <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
           <div class="bg-navy-900 px-3 py-2.5 flex items-center gap-2">
@@ -209,19 +251,19 @@ function renderDay(schedules,ds){
             <span class="text-gray-500 text-[10px] ml-auto">${sc.races.length}R</span>
           </div>
           <div class="divide-y divide-gray-100">
-            ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName);return`
+            ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
                   ${r.raceNumber}R
                 </div>
                 <div class="flex-1 min-w-0 ml-2.5">
-                  <div class="flex items-center gap-1.5">
-                    <span class="font-bold text-[12px] truncate ${sp?'text-navy-900':'text-gray-600'} group-hover:text-navy-900">${r.raceName||r.raceNumber+'R'}</span>
+                  <div class="flex items-start gap-1.5 flex-wrap">
+                    <span class="font-bold text-[13px] sm:text-[12px] leading-tight ${sp?'text-navy-900':'text-gray-600'} group-hover:text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
                     ${g}
                   </div>
-                  <div class="text-[10px] text-gray-400">${r.startTime?r.startTime+'発走':''}</div>
+                  <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
                 </div>
-                <svg class="w-3.5 h-3.5 text-gray-200 group-hover:text-navy-800 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                <svg class="w-3.5 h-3.5 text-gray-200 group-hover:text-navy-800 transition-colors shrink-0 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
               </a>`;}).join("")}
           </div>
         </div>`).join("")}
