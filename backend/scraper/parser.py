@@ -108,12 +108,24 @@ def _parse_race_info(soup: BeautifulSoup) -> dict:
     if race_name_el:
         info["raceName"] = race_name_el.get_text(strip=True)
         # Check for grade icons
-        if race_name_el.select_one(".Icon_GradeType1"):
+        # Flat: Icon_GradeType1 (GI), 2 (GII), 3 (GIII)
+        # Jumps: Icon_GradeType15/12 (GI障害), 16/13 (GII障害), 17/14 (GIII障害)
+        if race_name_el.select_one(".Icon_GradeType1, .Icon_GradeType15, .Icon_GradeType12"):
             info["grade"] = "GI"
-        elif race_name_el.select_one(".Icon_GradeType2"):
+        elif race_name_el.select_one(".Icon_GradeType2, .Icon_GradeType16, .Icon_GradeType13"):
             info["grade"] = "GII"
-        elif race_name_el.select_one(".Icon_GradeType3"):
+        elif race_name_el.select_one(".Icon_GradeType3, .Icon_GradeType17, .Icon_GradeType14"):
             info["grade"] = "GIII"
+        # Name-based fallback for known jumps races (icons sometimes missing)
+        if info["grade"] is None:
+            name = info["raceName"]
+            if "中山グランドジャンプ" in name or "中山大障害" in name:
+                info["grade"] = "GI"
+            elif any(k in name for k in ["東京ハイジャンプ", "阪神スプリングジャンプ",
+                                          "東京オータムジャンプ", "京都ハイジャンプ"]):
+                info["grade"] = "GII"
+            elif "京都ジャンプ" in name or "阪神ジャンプ" in name or "新潟ジャンプ" in name:
+                info["grade"] = "GIII"
 
     # Race number
     race_num_el = soup.select_one(".RaceNum")

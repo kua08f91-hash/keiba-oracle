@@ -122,7 +122,8 @@ async function loadAndRenderDay(ds){
   if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
   el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
   try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`);const data=await r.json();
-    const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
+    // Preserve grade info via raceInfo so gradeTag can read it
+    const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
     scheduleCache[ds]=sc;renderDay(sc,ds);
   }catch(e){el.innerHTML='<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">Failed to load</div>';}
 }
@@ -130,38 +131,45 @@ async function loadAndRenderDay(ds){
 function isSpecial(n){return n.includes("特別")||n.includes("ステークス")||n.includes("賞")||n.includes("カップ")||n.includes("GI")||n.includes("GII")||n.includes("GIII")||n.includes("Listed")||n.includes("オープン");}
 // JRA official graded race names (exact match list)
 // Source: JRA公式 2026年重賞競走一覧
+// Priority: raceInfo.grade > this list (used as fallback when grade=null)
 const GRADE_RACES = {
   "GI": [
-    "フェブラリーS","高松宮記念","大阪杯","桜花賞","皐月賞","天皇賞","NHKマイル",
-    "ヴィクトリアマイル","オークス","日本ダービー","安田記念","宝塚記念",
-    "スプリンターズS","秋華賞","菊花賞","エリザベス女王杯","マイルCS",
-    "ジャパンC","チャンピオンズC","有馬記念","ホープフルS",
-    "朝日杯FS","阪神JF"
+    // 平地GI
+    "フェブラリーS","高松宮記念","大阪杯","桜花賞","皐月賞","天皇賞",
+    "NHKマイルC","NHKマイル","ヴィクトリアマイル","オークス","日本ダービー",
+    "東京優駿","安田記念","宝塚記念","スプリンターズS","秋華賞","菊花賞",
+    "エリザベス女王杯","マイルCS","ジャパンC","チャンピオンズC","有馬記念",
+    "ホープフルS","朝日杯FS","阪神JF",
+    // 障害GI
+    "中山グランドジャンプ","中山GJ","中山大障害"
   ],
   "GII": [
     "日経新春杯","アメリカJCC","東海S","京都記念","共同通信杯",
-    "京都牝馬S","中山記念","阪急杯","チューリップ賞","弥生賞",
-    "金鯱賞","フィリーズR","スプリングS","日経賞",
-    "ニュージーランドT","アーリントンC","サウジアラビアRC",
-    "フローラS","青葉賞","京王杯SC","目黒記念",
-    "セントウルS","ローズS","オールカマー","京都大賞典",
-    "府中牝馬S","アルゼンチン共和国杯","ステイヤーズS",
-    "札幌記念","セントライト記念","神戸新聞杯","富士S",
-    "スワンS","デイリー杯","京阪杯",
-    "阪神カップ","産経大阪杯","阪神牝馬S","阪神牝馬","NZT","AJC","福島牝馬S"
+    "きさらぎ賞","京都牝馬S","中山記念","阪急杯","チューリップ賞","弥生賞",
+    "金鯱賞","フィリーズR","フィリーズレビュー","スプリングS","日経賞",
+    "阪神大賞典","毎日杯","マイラーズC","フローラS","青葉賞",
+    "京王杯SC","京王杯スプリングC","目黒記念","京都新聞杯",
+    "札幌記念","セントウルS","ローズS","オールカマー","神戸新聞杯",
+    "セントライト記念","京都大賞典","府中牝馬S","富士S","スワンS",
+    "デイリー杯","京阪杯","アルゼンチン共和国杯",
+    "ステイヤーズS","阪神カップ","阪神C","阪神牝馬S",
+    // 障害GII
+    "東京ハイジャンプ","阪神スプリングジャンプ","東京オータムジャンプ","京都ハイジャンプ","京都ジャンプS"
   ],
   "GIII": [
     "中山金杯","京都金杯","シンザン記念","フェアリーS","京成杯",
-    "愛知杯","東京新聞杯","きさらぎ賞","小倉大賞典","ダイヤモンドS",
-    "中山牝馬S","フラワーC","ファルコンS","阪神大賞典",
-    "ダービーCT","マーガレットS","福島牝馬S","新潟大賞典",
-    "京都新聞杯","葵S","鳴尾記念","エプソムC","函館スプリントS",
-    "CBC賞","ラジオNIKKEI賞","プロキオンS","七夕賞","函館記念",
-    "中京記念","小倉記念","関屋記念","エルムS","北九州記念",
-    "札幌2歳S","キーンランドC","新潟記念","紫苑S","レパードS",
-    "シリウスS","みやこS","武蔵野S","東京スポーツ杯",
-    "京都2歳S","ターコイズS","カペラS","中日新聞杯",
-    "阪神C","チャーチルC","毎日杯","マーチS"
+    "愛知杯","東京新聞杯","シルクロードS","根岸S","小倉大賞典",
+    "ダイヤモンドS","アーリントンC","中山牝馬S","フラワーC","ファルコンS",
+    "オーシャンS","ダービー卿CT","ダービーCT","マーガレットS","アンタレスS",
+    "ニュージーランドT","NZT","AJC",
+    "福島牝馬S","新潟大賞典","葵S","鳴尾記念","エプソムC",
+    "函館スプリントS","マーメイドS","ユニコーンS","CBC賞","ラジオNIKKEI賞",
+    "プロキオンS","七夕賞","函館記念","中京記念","小倉記念","関屋記念",
+    "エルムS","北九州記念","札幌2歳S","キーンランドC","新潟記念",
+    "紫苑S","レパードS","シリウスS","みやこS","武蔵野S",
+    "ファンタジーS","東京スポーツ杯","京都2歳S","サウジアラビアRC","サウジアラビアロイヤルC",
+    "ターコイズS","カペラS","中日新聞杯","チャーチルC","マーチS",
+    "京成杯AH","京成杯オータムH","チャレンジC"
   ]
 };
 
