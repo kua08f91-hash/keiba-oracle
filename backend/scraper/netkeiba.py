@@ -298,12 +298,16 @@ def _parse_past_race_td(td) -> Optional[dict]:
     Text format example:
       2026.02.28 阪神10仁川SLダ2000 2:04.8良16頭 8番 4人 藤岡佑介 58.514-14-14-
     Class 'Ranking_1' indicates 1st place, 'Ranking_2' = 2nd, etc.
+
+    Extracts: pos, condition, surface, distance, track, direction, date,
+    finish_time, field_size, post_position, popularity, weight_carried,
+    corners (通過順), running_style (derived: 逃げ/先行/差し/追込).
     """
     text = td.get_text(strip=True)
     if not text:
         return None
 
-    # Determine finish position from class
+    # Position from Ranking class (most reliable)
     cls_list = td.get("class", [])
     pos = 0
     for cls in cls_list:
@@ -312,36 +316,37 @@ def _parse_past_race_td(td) -> Optional[dict]:
             pos = int(m.group(1))
             break
 
-    # If no Ranking class, try to infer position from the text
-    # The text may contain position info but Ranking class is more reliable
     if pos == 0:
-        # Try to extract from text: look for pattern like "X着" or rank number
-        # For non-winning races, position might not be in a class
-        # Use a heuristic: check for numbers at end or specific patterns
         pos_match = re.search(r"(\d+)着", text)
         if pos_match:
             pos = int(pos_match.group(1))
 
-    # Extract track condition: 良, 稍, 重, 不
+    # Date: YYYY.MM.DD
+    date_str = ""
+    date_match = re.search(r"(\d{4}\.\d{2}\.\d{2})", text)
+    if date_match:
+        date_str = date_match.group(1)
+
+    # Track condition
     condition = ""
     cond_match = re.search(r"(良|稍|重|不)", text)
     if cond_match:
         cond_char = cond_match.group(1)
         condition = {"良": "良", "稍": "稍重", "重": "重", "不": "不良"}.get(cond_char, "")
 
-    # Extract surface: 芝 or ダ
+    # Surface
     surface = ""
     surf_match = re.search(r"(芝|ダ)", text)
     if surf_match:
         surface = surf_match.group(1)
 
-    # Extract distance: number after 芝 or ダ
+    # Distance
     dist = 0
     dist_match = re.search(r"(?:芝|ダ)(\d{3,4})", text)
     if dist_match:
         dist = int(dist_match.group(1))
 
-    # Extract track name (e.g., 阪神, 中山, 東京)
+    # Track name
     track = ""
     track_names = ["札幌", "函館", "福島", "新潟", "東京", "中山", "中京", "京都", "阪神", "小倉"]
     for tn in track_names:
@@ -349,14 +354,78 @@ def _parse_past_race_td(td) -> Optional[dict]:
             track = tn
             break
 
-    # Direction: infer from track name
-    # Most JRA tracks: 中山=右, 阪神=右(外), 東京=左, 京都=右, 中京=左, 新潟=左(外), 札幌=右, 函館=右, 福島=右, 小倉=右
     track_direction_map = {
         "札幌": "右", "函館": "右", "福島": "右", "新潟": "左",
         "東京": "左", "中山": "右", "中京": "左", "京都": "右",
         "阪神": "右", "小倉": "右",
     }
     direction = track_direction_map.get(track, "")
+
+    # Finish time: "M:SS.f" format (e.g., 2:04.8, 1:34.2)
+    finish_time = ""
+    time_match = re.search(r"(\d:\d{2}\.\d)", text)
+    if time_match:
+        finish_time = time_match.group(1)
+
+    # Field size: "16頭"
+    field_size = 0
+    field_match = re.search(r"(\d{1,2})頭", text)
+    if field_match:
+        field_size = int(field_match.group(1))
+
+    # Post position: "8番"
+    post_position = 0
+    post_match = re.search(r"(\d{1,2})番", text)
+    if post_match:
+        post_position = int(post_match.group(1))
+
+    # Popularity at the time: "4人"
+    past_popularity = 0
+    pop_match = re.search(r"(\d{1,2})人", text)
+    if pop_match:
+        past_popularity = int(pop_match.group(1))
+
+    # Weight carried: e.g., "58.5" before corner numbers
+    weight_carried = 0.0
+    # Match X.Y where X is 2 digits, typically 49.0 to 60.0
+    wc_match = re.search(r"(\d{2}\.\d)(?=\d+-)", text)
+    if wc_match:
+        try:
+            weight_carried = float(wc_match.group(1))
+        except ValueError:
+            pass
+
+    # Corners: "14-14-14-" or "3-2-2-" (1-4 numbers separated by hyphens)
+    # They appear at the end of the text, directly after the weight (e.g., "58.5" + "14-14-14-").
+    # To avoid absorbing the last digit(s) of the weight into the first corner number,
+    # we strip the weight prefix from the trailing portion before matching.
+    corners = []
+    corner_search_text = text
+    if wc_match:
+        # Remove the weight match from the string so the corner regex starts fresh
+        corner_search_text = text[:wc_match.start()] + text[wc_match.end():]
+    corner_match = re.search(r"(\d+(?:-\d+){1,3})-?$", corner_search_text)
+    if corner_match:
+        corner_str = corner_match.group(1)
+        try:
+            corners = [int(n) for n in corner_str.split("-") if n]
+        except ValueError:
+            corners = []
+
+    # Derive running style from corners (脚質)
+    # Based on average corner position relative to field size
+    running_style = ""
+    if corners and field_size > 0:
+        avg_corner = sum(corners) / len(corners)
+        ratio = avg_corner / field_size
+        if ratio <= 0.25:
+            running_style = "逃げ"      # Front-runner
+        elif ratio <= 0.50:
+            running_style = "先行"      # Stalker
+        elif ratio <= 0.75:
+            running_style = "差し"      # Midpack closer
+        else:
+            running_style = "追込"      # Deep closer
 
     return {
         "pos": pos,
@@ -365,6 +434,14 @@ def _parse_past_race_td(td) -> Optional[dict]:
         "distance": dist,
         "track": track,
         "direction": direction,
+        "date": date_str,
+        "finishTime": finish_time,
+        "fieldSize": field_size,
+        "postPosition": post_position,
+        "popularity": past_popularity,
+        "weightCarried": weight_carried,
+        "corners": corners,
+        "runningStyle": running_style,
     }
 
 

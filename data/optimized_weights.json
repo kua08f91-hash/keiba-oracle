@@ -1,0 +1,49 @@
+{
+  "version": "20260416_191026",
+  "method": "Real-pipeline minimax with latest-month-priority validation",
+  "analytical_weights": {
+    "trackDirection": 0.0694,
+    "trackCondition": 0.0381,
+    "trackSpecific": 0.0342,
+    "jockeyAbility": 0.0438,
+    "sameDistance": 0.0551,
+    "sameSurface": 0.0495,
+    "sameCondition": 0.0816,
+    "pastPerformance": 0.0685,
+    "speedFigure": 0.0871,
+    "runningStyle": 0.0785,
+    "daysSinceLast": 0.1048,
+    "weightCarriedTrend": 0.0715,
+    "formTrend": 0.0196,
+    "ageAndSex": 0.0672,
+    "weightCarried": 0.0321,
+    "horseWeightChange": 0.012,
+    "trainerAbility": 0.0231,
+    "courseAffinity": 0.0036,
+    "distanceAptitude": 0.0605
+  },
+  "market_weight": 0.147,
+  "baseline_train": {
+    "202304": 1.7743,
+    "202305": 1.3354,
+    "202306": 1.0635
+  },
+  "baseline_holdout": {
+    "202307": 1.6315,
+    "202604": 0.6492
+  },
+  "optimized_train": {
+    "202304": 2.5625,
+    "202305": 2.3817,
+    "202306": 1.1921
+  },
+  "optimized_holdout": {
+    "202307": 1.267,
+    "202604": 0.9005
+  },
+  "latest_month": "202604",
+  "latest_delta": 25.13,
+  "holdout_min_delta": 25.13,
+  "holdout_mean_delta": -5.65,
+  "optimized_at": "2026-04-16T19:10:26.667594"
+}

@@ -269,12 +269,11 @@ class TestMLScoringModel:
     def test_value_edge_in_factors(self, sample_race_info, sample_entries):
         from backend.predictor.ml_scoring import MLScoringModel
         model = MLScoringModel()
-        if model._model_combined is None:
-            pytest.skip("No ML model available")
         preds = model.predict(sample_race_info, sample_entries)
         active = [p for p in preds if p["score"] > 0]
-        # v7 should include valueEdge
-        assert "valueEdge" in active[0]["factors"]
+        # v5 primary: factors include analytical keys (no valueEdge)
+        assert "pastPerformance" in active[0]["factors"]
+        assert "jockeyAbility" in active[0]["factors"]
 
     def test_fallback_on_few_entries(self, sample_race_info):
         from backend.predictor.ml_scoring import MLScoringModel

@@ -1,4 +1,11 @@
-"""FastAPI backend for JRA prediction app."""
+"""FastAPI backend for JRA prediction app.
+
+Serves predictions from DB (populated by realtime_worker) when available,
+falls back to live computation otherwise.
+"""
+from __future__ import annotations
+
+import json
 import sys
 import os
 from datetime import datetime, timedelta
@@ -9,37 +16,67 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.database.db import init_db
+from backend.database.db import init_db, get_session
+from backend.database.models import (
+    HorseEntry, OddsSnapshot, CombinationOdds,
+    PredictionsCache, RaceStatus,
+)
 from backend.scraper.netkeiba import fetch_race_list, fetch_race_card, fetch_pedigree_batch
 from backend.scraper.odds import fetch_combination_odds
 from backend.predictor.ml_scoring import MLScoringModel
-from backend.predictor.bet_optimizer import optimize_bets, detect_race_pattern, scores_to_probabilities, generate_candidates, monte_carlo_finish, estimate_hit_probabilities, find_odds_for_bet, implied_fair_odds, pick_longshot
+from backend.predictor.bet_optimizer import (
+    optimize_bets, detect_race_pattern, scores_to_probabilities,
+    generate_candidates, monte_carlo_finish, estimate_hit_probabilities,
+    find_odds_for_bet, implied_fair_odds, pick_longshot,
+)
 
 app = FastAPI(title="JRA Prediction API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:8080", "null"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+predictor = MLScoringModel()
+
+
+def _get_cached_predictions(race_id: str):
+    """Return cached predictions from DB if available."""
+    db = get_session()
+    try:
+        cache = db.query(PredictionsCache).filter(
+            PredictionsCache.race_id == race_id
+        ).first()
+        if not cache or not cache.predictions_json:
+            return None
+        return {
+            "predictions": json.loads(cache.predictions_json),
+            "bets": json.loads(cache.bets_json) if cache.bets_json else [],
+            "longshot": json.loads(cache.longshot_json) if cache.longshot_json else None,
+            "pattern": cache.pattern or "",
+            "frozen": cache.frozen,
+            "updated_at": cache.updated_at.isoformat() if cache.updated_at else None,
+        }
+    except Exception:
+        return None
+    finally:
+        db.close()
 
 
 def _fetch_live_combination_odds(race_id: str, fallback_odds: dict) -> dict:
     """Fetch real-time odds for all bet types from netkeiba API."""
     import requests as _req
-    import json as _json
-    import re as _re
 
     API_H = {
         "User-Agent": "Mozilla/5.0",
         "X-Requested-With": "XMLHttpRequest",
         "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
     }
-    # Correct type mapping (verified against JRA official):
-    # 1=単勝, 2=複勝, 3=枠連, 4=馬連, 5=ワイド, 6=馬単, 7=3連複, 8=3連単
-    TYPE_MAP = {
-        4: "umaren",
-        5: "wide",
-        7: "sanrenpuku",
-        8: "sanrentan",
-    }
+    TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
 
     def _parse_horse_nums(key_str):
-        """Parse '0508' -> [5,8] or '050812' -> [5,8,12]"""
         nums = []
         i = 0
         while i < len(key_str):
@@ -51,53 +88,35 @@ def _fetch_live_combination_odds(race_id: str, fallback_odds: dict) -> dict:
         return nums
 
     result = dict(fallback_odds)
-
     for api_type, bet_type in TYPE_MAP.items():
         try:
             url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type={api_type}&action=init"
             r = _req.get(url, headers=API_H, timeout=5)
-            d = _json.loads(r.text)
+            d = json.loads(r.text)
             data = d.get("data", {})
             if not isinstance(data, dict):
                 continue
             odds_dict = data.get("odds", {}).get(str(api_type), {})
             if not odds_dict:
                 continue
-
             entries = []
             for combo_key, vals in odds_dict.items():
                 if not isinstance(vals, list) or len(vals) < 1:
                     continue
-                odds_str = vals[0]
                 try:
-                    odds_val = float(odds_str.replace(",", ""))
+                    odds_val = float(vals[0].replace(",", ""))
                 except (ValueError, TypeError):
                     continue
                 if odds_val <= 0:
                     continue
                 horses = _parse_horse_nums(combo_key)
                 if len(horses) >= 2:
-                    entries.append({
-                        "horses": horses,
-                        "odds": odds_val,
-                        "payout": int(odds_val * 100),
-                    })
-
+                    entries.append({"horses": horses, "odds": odds_val, "payout": int(odds_val * 100)})
             if entries:
                 result[bet_type] = entries
         except Exception:
             pass
-
     return result
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8080", "null"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-predictor = MLScoringModel()
 
 
 @app.on_event("startup")
@@ -122,7 +141,10 @@ def get_race_list(date: str):
 
 @app.get("/api/racecard/{race_id}")
 def get_race_card(race_id: str):
-    """Get race card with predictions for a given race ID."""
+    """Get race card with predictions for a given race ID.
+
+    Priority: DB cache (from realtime_worker) → live computation fallback.
+    """
     if not race_id or len(race_id) < 10:
         raise HTTPException(status_code=400, detail="Invalid race ID.")
 
@@ -130,98 +152,64 @@ def get_race_card(race_id: str):
     if not data:
         raise HTTPException(status_code=404, detail="Race not found or scraping failed.")
 
-    # Inject live odds only if entries completely lack odds (first load)
-    # Predictions FROZEN 10 min before post, but odds always updated
     entries = data["entries"]
-    race_frozen = False
+
+    # Try DB cache first (populated by realtime_worker)
+    cached = _get_cached_predictions(race_id)
+    if cached and cached["predictions"]:
+        # Inject latest DB odds into entries
+        db = get_session()
+        try:
+            for he in db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all():
+                for e in entries:
+                    if e["horseNumber"] == he.horse_number and he.odds:
+                        e["odds"] = he.odds
+                        e["popularity"] = he.popularity
+        finally:
+            db.close()
+
+        return {
+            "raceInfo": data["race_info"],
+            "entries": entries,
+            "predictions": cached["predictions"],
+            "frozen": cached["frozen"],
+            "updatedAt": cached["updated_at"],
+        }
+
+    # Fallback: live computation (worker not running or no cache yet)
+    # Fetch live odds
     try:
-        start_time_str = data["race_info"].get("startTime", "")
-        if start_time_str:
-            h, m = start_time_str.split(":")
-            from datetime import datetime as _dt
-            race_start = _dt.now().replace(hour=int(h), minute=int(m), second=0)
-            mins_to_post = (race_start - _dt.now()).total_seconds() / 60
-            if mins_to_post < 10:
-                race_frozen = True
+        import requests as _req
+        url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
+        r = _req.get(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
+        }, timeout=5)
+        d = json.loads(r.text)
+        tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
+        if tansho:
+            for e in entries:
+                hn_str = str(e["horseNumber"]).zfill(2)
+                if hn_str in tansho:
+                    vals = tansho[hn_str]
+                    if isinstance(vals, list) and len(vals) >= 3:
+                        try:
+                            e["odds"] = float(vals[0])
+                            e["popularity"] = int(vals[2])
+                        except (ValueError, IndexError):
+                            pass
     except Exception:
         pass
 
-    # Odds handling:
-    # - Not frozen: fetch live odds, update entries + DB
-    # - Frozen: use DB cached odds only (no external request = fast + stable)
-    has_odds = any(e.get("odds") for e in entries if not e.get("isScratched"))
-    if not race_frozen:
-        try:
-            import requests as _req
-            import json as _json
-            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
-            r = _req.get(url, headers={
-                "User-Agent": "Mozilla/5.0",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-            }, timeout=5)
-            d = _json.loads(r.text)
-            tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
-            if tansho:
-                for e in entries:
-                    hn_str = str(e["horseNumber"]).zfill(2)
-                    if hn_str in tansho:
-                        vals = tansho[hn_str]
-                        if isinstance(vals, list) and len(vals) >= 3:
-                            try:
-                                e["odds"] = float(vals[0])
-                                e["popularity"] = int(vals[2])
-                            except (ValueError, IndexError):
-                                pass
-                # Persist to DB so subsequent calls use cached odds
-                try:
-                    from backend.database.db import get_session
-                    from backend.database.models import HorseEntry as HE
-                    db = get_session()
-                    try:
-                        for he in db.query(HE).filter(HE.race_id == race_id).all():
-                            hn_str = str(he.horse_number).zfill(2)
-                            if hn_str in tansho:
-                                vals = tansho[hn_str]
-                                if isinstance(vals, list) and len(vals) >= 3:
-                                    try:
-                                        he.odds = float(vals[0])
-                                        he.popularity = int(vals[2])
-                                    except (ValueError, IndexError):
-                                        pass
-                        db.commit()
-                    finally:
-                        db.close()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    # Generate predictions
-    if race_frozen:
-        # FROZEN: use DB cached odds for both display and prediction (no external calls)
-        try:
-            from backend.database.db import get_session
-            from backend.database.models import HorseEntry as HE
-            db = get_session()
-            try:
-                db_map = {he.horse_number: (he.odds, he.popularity)
-                          for he in db.query(HE).filter(HE.race_id == race_id).all()}
-            finally:
-                db.close()
-            for e in entries:
-                if e["horseNumber"] in db_map:
-                    e["odds"], e["popularity"] = db_map[e["horseNumber"]]
-        except Exception:
-            pass
-        predictions = predictor.predict(data["race_info"], entries)
-    else:
-        predictions = predictor.predict(data["race_info"], entries)
+    predictions = predictor.predict(data["race_info"], entries)
 
     return {
         "raceInfo": data["race_info"],
         "entries": entries,
         "predictions": predictions,
+        "frozen": False,
+        "updatedAt": None,
     }
 
 
@@ -251,15 +239,26 @@ def get_odds(race_id: str):
 
 @app.get("/api/optimized-bets/{race_id}")
 def get_optimized_bets(race_id: str):
-    """Get dynamically optimized betting suggestions for a race.
+    """Get optimized betting suggestions for a race.
 
-    Uses Monte Carlo simulation + EV optimization to select the best
-    5 bets per race, adapting to each race's score distribution and odds.
+    Priority: DB cache (from realtime_worker) → live computation fallback.
     """
     if not race_id or len(race_id) < 10:
         raise HTTPException(status_code=400, detail="Invalid race ID.")
 
-    # Get race card and predictions
+    # Try DB cache first
+    cached = _get_cached_predictions(race_id)
+    if cached and cached["bets"]:
+        return {
+            "bets": cached["bets"],
+            "longshot": cached["longshot"],
+            "pattern": cached["pattern"],
+            "raceId": race_id,
+            "frozen": cached["frozen"],
+            "updatedAt": cached["updated_at"],
+        }
+
+    # Fallback: live computation
     data = fetch_race_card(race_id)
     if not data:
         raise HTTPException(status_code=404, detail="Race not found.")
@@ -267,24 +266,19 @@ def get_optimized_bets(race_id: str):
     try:
         predictions = predictor.predict(data["race_info"], data["entries"])
 
-        # Get real-time odds from netkeiba API for all bet types
         from backend.scraper.odds import estimate_from_entries
         odds_data = estimate_from_entries(data["entries"]) or {}
-
         try:
             odds_data = _fetch_live_combination_odds(race_id, odds_data)
-        except Exception as e:
-            print(f"Warning: live odds fetch failed for {race_id}: {e}")
+        except Exception:
+            pass
 
-        # Run optimizer
         bets = optimize_bets(predictions, odds_data, data["race_info"])
 
-        # Detect race pattern for UI
         head_count = data["race_info"].get("headCount", 16)
         probs = scores_to_probabilities(predictions, head_count)
         pattern = detect_race_pattern(probs)
 
-        # Pick longshot (穴場券)
         import random
         rng = random.Random(42)
         all_candidates = generate_candidates(probs, top_n=min(5, len(probs)))
@@ -308,15 +302,12 @@ def get_optimized_bets(race_id: str):
             "longshot": longshot,
             "pattern": pattern,
             "raceId": race_id,
+            "frozen": False,
+            "updatedAt": None,
         }
     except Exception as e:
         print(f"Error in optimized-bets for {race_id}: {e}")
-        # Return empty bets rather than 500
-        return {
-            "bets": [],
-            "pattern": "",
-            "raceId": race_id,
-        }
+        return {"bets": [], "pattern": "", "raceId": race_id}
 
 
 @app.get("/api/race-dates")
@@ -393,7 +384,6 @@ def get_pedigree(race_id: str):
 
     pedigrees = fetch_pedigree_batch(horse_ids)
 
-    # Re-generate predictions with pedigree data
     for entry in entries:
         hn = entry["horseNumber"]
         if hn in pedigrees:
@@ -407,3 +397,68 @@ def get_pedigree(race_id: str):
         "entries": entries,
         "predictions": predictions,
     }
+
+
+@app.get("/api/odds-history/{race_id}")
+def get_odds_history(race_id: str):
+    """Get odds time-series from DB (populated by realtime_worker)."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+
+    db = get_session()
+    try:
+        snapshots = (
+            db.query(OddsSnapshot)
+            .filter(OddsSnapshot.race_id == race_id)
+            .order_by(OddsSnapshot.captured_at)
+            .all()
+        )
+        if not snapshots:
+            return {"raceId": race_id, "history": []}
+
+        history = {}
+        for s in snapshots:
+            hn = s.horse_number
+            if hn not in history:
+                history[hn] = []
+            history[hn].append({
+                "odds": s.odds,
+                "popularity": s.popularity,
+                "capturedAt": s.captured_at.isoformat() if s.captured_at else None,
+            })
+
+        return {"raceId": race_id, "history": history}
+    finally:
+        db.close()
+
+
+@app.get("/api/race-status")
+def get_race_status(date: str = ""):
+    """Get race statuses for a date (default: today)."""
+    if not date:
+        date = datetime.now().strftime("%Y%m%d")
+
+    db = get_session()
+    try:
+        statuses = db.query(RaceStatus).filter(
+            RaceStatus.race_id.like(f"{date}%")
+        ).all()
+
+        result = []
+        for s in statuses:
+            cache = db.query(PredictionsCache).filter(
+                PredictionsCache.race_id == s.race_id
+            ).first()
+            result.append({
+                "raceId": s.race_id,
+                "status": s.status,
+                "startTime": s.start_time,
+                "lastOddsUpdate": s.last_odds_update.isoformat() if s.last_odds_update else None,
+                "lastPredictionUpdate": s.last_prediction_update.isoformat() if s.last_prediction_update else None,
+                "frozen": cache.frozen if cache else False,
+                "hasPredictions": bool(cache and cache.predictions_json),
+            })
+
+        return {"date": date, "races": result}
+    finally:
+        db.close()

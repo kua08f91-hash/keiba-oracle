@@ -1,40 +1,86 @@
-"""ML-based scoring engine v7 with value detection.
+"""Scoring engine — v5 rule-based primary with ML weight optimization.
 
-Uses dual models:
-  - Analytical model: Predicts without market data → pure horse evaluation
-  - Combined model: Predicts with market data → refined accuracy
-  - Value edge: Where analytical disagrees with market → betting opportunity
+Primary: v5 WeightedScoringModel (12 analytical factors, stable ROI 117%)
+  - Loads optimized weights from data/optimized_weights.json if available
+  - Falls back to hand-tuned weights from 1,107-race optimization
 
-Falls back to v5 WeightedScoringModel if trained model is missing.
+ML models are kept for:
+  - Weight optimization (auto_improve pipeline)
+  - Validation / comparison
+  - Future hybrid strategies
 """
 from __future__ import annotations
 
+import json
 import os
 import logging
 import math
 
 from .model import PredictionModel
-from .scoring import WeightedScoringModel, MARK_MAP, ALL_FACTOR_KEYS
+from .scoring import WeightedScoringModel, MARK_MAP, ALL_FACTOR_KEYS, ANALYTICAL_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "trained_model.pkl")
+WEIGHTS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data", "optimized_weights.json"
+)
 
 
 class MLScoringModel(PredictionModel):
-    """Dual-model prediction with value edge detection."""
+    """Primary: v5 rule-based engine with auto-optimized weights.
+
+    Loads optimized weights from data/optimized_weights.json if available,
+    otherwise uses the default hand-tuned ANALYTICAL_WEIGHTS.
+    ML models are retained for weight optimization and validation.
+    """
 
     def __init__(self):
+        self._v5 = WeightedScoringModel()
         self._model_analytical = None
         self._model_combined = None
         self._analytical_columns = None
         self._all_columns = None
-        self._fallback = WeightedScoringModel()
-        self._load_model()
+        self._load_optimized_weights()
+        self._load_ml_model()
 
-    def _load_model(self):
+    def _load_optimized_weights(self):
+        """Load auto-optimized weights for v5 if available.
+
+        Skips loading if the saved weights don't match the current factor set
+        (e.g., old 12-factor file vs new 15-factor model).
+        """
+        if not os.path.exists(WEIGHTS_PATH):
+            return
+        try:
+            with open(WEIGHTS_PATH, "r") as f:
+                data = json.load(f)
+            weights = data.get("analytical_weights", {})
+            market_weight = data.get("market_weight")
+            from . import scoring
+            expected_keys = set(scoring.ANALYTICAL_WEIGHTS.keys())
+            saved_keys = set(weights.keys())
+            if saved_keys != expected_keys:
+                logger.warning(
+                    "Optimized weights factor set mismatch (saved=%d, expected=%d) — using defaults",
+                    len(saved_keys), len(expected_keys)
+                )
+                return
+            if weights:
+                for k, v in weights.items():
+                    scoring.ANALYTICAL_WEIGHTS[k] = v
+                if market_weight is not None:
+                    scoring.MARKET_WEIGHT = market_weight
+                    scoring.ANALYTICAL_WEIGHT = 1.0 - market_weight
+                logger.info("Loaded optimized weights from %s (version=%s)",
+                            WEIGHTS_PATH, data.get("version", "?"))
+        except Exception as e:
+            logger.warning("Failed to load optimized weights: %s", e)
+
+    def _load_ml_model(self):
+        """Load ML models (for validation and weight optimization)."""
         if not os.path.exists(MODEL_PATH):
-            logger.warning("ML model not found, using v5 fallback")
             return
         try:
             import joblib
@@ -43,27 +89,20 @@ class MLScoringModel(PredictionModel):
             self._model_combined = bundle.get("model_combined")
             self._analytical_columns = bundle.get("analytical_columns")
             self._all_columns = bundle.get("all_columns")
-
-            # Backward compat with v6 single-model format
             if self._model_combined is None and "model" in bundle:
                 self._model_combined = bundle["model"]
                 self._all_columns = bundle.get("feature_columns")
-
             version = bundle.get("version", "?")
-            logger.info("ML model v%s loaded (dual=%s)", version, self._model_analytical is not None)
+            logger.info("ML model v%s loaded (available for validation)", version)
         except Exception as e:
-            logger.error("Failed to load ML model: %s", e)
+            logger.warning("ML model load failed (v5 primary unaffected): %s", e)
 
     def predict(self, race_info: dict, entries: list) -> list:
-        if self._model_combined is None:
-            return self._fallback.predict(race_info, entries)
-        try:
-            return self._predict_ml(race_info, entries)
-        except Exception as e:
-            logger.error("ML prediction failed: %s, falling back", e)
-            return self._fallback.predict(race_info, entries)
+        """Use v5 rule-based engine as primary predictor."""
+        return self._v5.predict(race_info, entries)
 
-    def _predict_ml(self, race_info: dict, entries: list) -> list:
+    def predict_ml(self, race_info: dict, entries: list) -> list:
+        """ML prediction (for validation/comparison, not used in production)."""
         import numpy as np
         from .feature_engineering import (
             ANALYTICAL_COLUMNS,

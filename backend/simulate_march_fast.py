@@ -20,7 +20,13 @@ from backend.predictor.ml_scoring import MLScoringModel
 from backend.predictor.bet_optimizer import optimize_bets, detect_race_pattern, scores_to_probabilities
 from backend.database.db import init_db
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+}
 COURSE_MAP = {
     "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
     "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
@@ -28,12 +34,16 @@ COURSE_MAP = {
 
 predictor = MLScoringModel()
 
+# Persistent session for connection reuse
+_session = requests.Session()
+_session.headers.update(HEADERS)
+
 
 def fetch_payouts(race_id):
     """Fetch payout data from db.netkeiba.com."""
     url = f"https://db.netkeiba.com/race/{race_id}/"
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = _session.get(url, timeout=20)
         resp.encoding = resp.apparent_encoding or "UTF-8"
         soup = BeautifulSoup(resp.text, "html.parser")
         payouts = {}
@@ -64,8 +74,9 @@ def fetch_payouts(race_id):
 
 def check_bet_hit(bet, payouts):
     type_map = {
-        "tansho": "単勝", "fukusho": "複勝", "umaren": "馬連",
-        "wide": "ワイド", "sanrenpuku": "三連複", "sanrentan": "三連単",
+        "tansho": "単勝", "fukusho": "複勝", "wakuren": "枠連",
+        "umaren": "馬連", "umatan": "馬単", "wide": "ワイド",
+        "sanrenpuku": "三連複", "sanrentan": "三連単",
     }
     label = type_map.get(bet["type"])
     if not label or label not in payouts:
@@ -78,9 +89,9 @@ def check_bet_hit(bet, payouts):
             return True, pamt
         elif bet["type"] == "fukusho" and len(horses) == 1 and horses[0] == pnums[0]:
             return True, pamt
-        elif bet["type"] in ("umaren", "wide", "sanrenpuku") and set(horses) == set(pnums):
+        elif bet["type"] in ("umaren", "wide", "wakuren", "sanrenpuku") and set(horses) == set(pnums):
             return True, pamt
-        elif bet["type"] == "sanrentan" and horses == pnums:
+        elif bet["type"] in ("umatan", "sanrentan") and horses == pnums:
             return True, pamt
     return False, 0
 
@@ -105,7 +116,7 @@ def get_march_race_ids():
                             ids.append(rid)
                 if ids:
                     results[ds] = ids
-                    print(f"  {int(ds[4:6])}/{int(ds[6:8])}: {len(ids)} races ({', '.join(s['name'] for s in schedules)})")
+                    print(f"  {int(ds[4:6])}/{int(ds[6:8])}: {len(ids)} races ({', '.join(s['name'] for s in schedules)})", flush=True)
         d += timedelta(days=1)
     return results
 
@@ -139,21 +150,14 @@ def main():
             rnum = int(race_id[10:12])
             processed += 1
 
-            # Get race card (cached after first fetch), with retry
+            # Get race card (cached after first fetch)
             data = None
-            for attempt in range(3):
-                try:
-                    data = fetch_race_card(race_id)
-                    if data:
-                        break
-                    time.sleep(5)
-                except Exception as e:
-                    if attempt < 2:
-                        time.sleep(10)
-                    else:
-                        print(f"  - {course}{rnum:2d}R: error {e}")
+            try:
+                data = fetch_race_card(race_id)
+            except Exception as e:
+                print(f"  - {course}{rnum:2d}R: error {e}", flush=True)
             if not data:
-                print(f"  - {course}{rnum:2d}R: no data (skipped)")
+                print(f"  - {course}{rnum:2d}R: no data (skipped)", flush=True)
                 continue
 
             entries = data.get("entries", [])
@@ -185,21 +189,21 @@ def main():
 
             # Optimizer
             try:
-                optimized = optimize_bets(predictions, odds_data, race_info)
+                optimized = optimize_bets(predictions, odds_data, race_info, entries=entries)
             except Exception:
                 continue
             if not optimized:
                 continue
 
-            # Payouts with retry
+            # Payouts with retry + backoff
             payouts = None
             for attempt in range(3):
                 payouts = fetch_payouts(race_id)
                 if payouts:
                     break
-                time.sleep(5)
+                time.sleep(8 * (attempt + 1))  # 8s, 16s, 24s backoff
             if not payouts:
-                print(f"  - {course}{rnum:2d}R: no payouts (skipped)")
+                print(f"  - {course}{rnum:2d}R: no payouts (skipped)", flush=True)
                 continue
 
             # Check bets
@@ -226,7 +230,10 @@ def main():
 
             mark = "+" if profit > 0 else (" " if profit == 0 else "-")
             hit_str = ",".join(race_hits) if race_hits else "---"
-            print(f"  {mark} {course}{rnum:2d}R [{pattern:4s}] ¥{race_bet}→¥{race_payout:>6,} {profit:>+7,} ({hit_str})")
+            print(f"  {mark} {course}{rnum:2d}R [{pattern:4s}] ¥{race_bet}→¥{race_payout:>6,} {profit:>+7,} ({hit_str})", flush=True)
+
+            # Rate limit: pause between races
+            time.sleep(3)
 
             all_results.append({
                 "date": ds, "course": course, "rnum": rnum,

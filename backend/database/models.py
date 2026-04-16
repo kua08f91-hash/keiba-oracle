@@ -48,6 +48,56 @@ class HorseEntry(Base):
     past_races_json = Column(Text, default="[]")
 
 
+class OddsSnapshot(Base):
+    """Time-series odds history for each horse."""
+    __tablename__ = "odds_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, nullable=False, index=True)
+    horse_number = Column(Integer, nullable=False)
+    odds_type = Column(String, default="tansho")  # tansho, fukusho
+    odds = Column(Float, nullable=False)
+    popularity = Column(Integer, nullable=True)
+    captured_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CombinationOdds(Base):
+    """Real-time combination odds (馬連/ワイド/3連複/3連単)."""
+    __tablename__ = "combination_odds"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, nullable=False, index=True)
+    bet_type = Column(String, nullable=False)  # umaren, wide, sanrenpuku, sanrentan
+    horses_key = Column(String, nullable=False)  # "04-07", "05-08-12"
+    odds = Column(Float, nullable=False)
+    captured_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PredictionsCache(Base):
+    """Cached predictions, bets, and longshot for each race."""
+    __tablename__ = "predictions_cache"
+
+    race_id = Column(String, primary_key=True)
+    predictions_json = Column(Text, default="[]")
+    bets_json = Column(Text, default="[]")
+    longshot_json = Column(Text, nullable=True)
+    pattern = Column(String, default="")
+    frozen = Column(Boolean, default=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RaceStatus(Base):
+    """Race lifecycle state management."""
+    __tablename__ = "race_status"
+
+    race_id = Column(String, primary_key=True)
+    status = Column(String, default="upcoming")  # upcoming, active, frozen, finished
+    start_time = Column(String, default="")
+    track_condition = Column(String, default="")
+    last_odds_update = Column(DateTime, nullable=True)
+    last_prediction_update = Column(DateTime, nullable=True)
+
+
 class RaceResult(Base):
     __tablename__ = "race_results"
 

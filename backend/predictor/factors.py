@@ -332,6 +332,253 @@ def calc_past_performance(past_races: list) -> float:
     return base_score
 
 
+def calc_running_style_consistency(past_races: list) -> float:
+    """Score based on running style consistency.
+
+    A consistent running style (always 逃げ or always 差し) indicates
+    the horse knows its role. Inconsistent style (changing each race)
+    indicates struggle to find identity.
+
+    Gracefully degrades: if no runningStyle data, returns neutral 50.0.
+    """
+    if not past_races:
+        return 50.0
+
+    styles = [r.get("runningStyle", "") for r in past_races[:5] if r.get("runningStyle")]
+    if len(styles) < 2:
+        return 50.0
+
+    from collections import Counter
+    counts = Counter(styles)
+    most_common_count = counts.most_common(1)[0][1]
+    consistency_ratio = most_common_count / len(styles)
+
+    # 100% consistent = 80, 50% = 50 (baseline), less = penalty
+    return 30.0 + 50.0 * consistency_ratio
+
+
+def calc_speed_figure(past_races: list, target_distance: int) -> float:
+    """Score based on speed figures from finish times at similar distances.
+
+    Converts M:SS.f times to seconds, compares to distance benchmarks.
+    Lower times = higher score. Gracefully degrades without time data.
+    """
+    if not past_races or target_distance <= 0:
+        return 50.0
+
+    # Benchmark times for distances (seconds per meter, rough estimates)
+    # Turf: 2400m ≈ 144s → 0.060 s/m; 1600m ≈ 96s → 0.060 s/m
+    # Dirt: slightly slower
+    def time_to_sec(t):
+        try:
+            parts = t.split(":")
+            if len(parts) == 2:
+                return int(parts[0]) * 60 + float(parts[1])
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    matching_speeds = []
+    for race in past_races[:5]:
+        dist = race.get("distance", 0)
+        time_str = race.get("finishTime", "")
+        if dist <= 0 or not time_str or abs(dist - target_distance) > 400:
+            continue
+        secs = time_to_sec(time_str)
+        if secs is None or secs <= 0:
+            continue
+        # Speed in m/s
+        speed = dist / secs
+        matching_speeds.append(speed)
+
+    if not matching_speeds:
+        return 50.0
+
+    avg_speed = sum(matching_speeds) / len(matching_speeds)
+    # JRA horses typically run 16-17 m/s. Score linearly.
+    # 15 m/s = 30, 17 m/s = 80
+    score = 30.0 + (avg_speed - 15.0) * 25.0
+    return max(20.0, min(95.0, score))
+
+
+def calc_weight_carried_trend(past_races: list, current_weight: float) -> float:
+    """Score based on weight carried trend.
+
+    If current weight is significantly higher than recent past, it's a handicap.
+    If lower, it's favorable. Gracefully degrades without data.
+    """
+    if not past_races or current_weight <= 0:
+        return 50.0
+
+    past_weights = [r.get("weightCarried", 0) for r in past_races[:4] if r.get("weightCarried", 0) > 0]
+    if not past_weights:
+        return 50.0
+
+    avg_past = sum(past_weights) / len(past_weights)
+    delta = current_weight - avg_past
+
+    # More weight = harder. -2kg = +15, +0kg = 50, +2kg = -15
+    # Typical range: -3 to +3 kg
+    score = 50.0 - delta * 7.5
+    return max(25.0, min(80.0, score))
+
+
+def calc_days_since_last_race(past_races: list, current_date: str = "") -> float:
+    """Score based on days since last race (休養明け判定).
+
+    Scoring:
+      1-14 days (中○週): 50 (normal)
+      15-28 days: 55 (slightly fresh)
+      29-60 days: 60 (freshness peak for many horses)
+      61-120 days: 55 (returning from layoff)
+      121-180 days: 45 (rust risk)
+      180+ days: 35 (significant layoff)
+      First career race: 45 (unknown)
+    """
+    if not past_races or not current_date:
+        return 50.0
+
+    last_race = past_races[0]
+    last_date = last_race.get("date", "")
+    if not last_date:
+        return 50.0
+
+    # Parse "YYYY.MM.DD" format
+    def parse_date(s):
+        try:
+            parts = s.replace("/", ".").split(".")
+            if len(parts) == 3:
+                from datetime import date
+                return date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    d1 = parse_date(current_date)
+    d2 = parse_date(last_date)
+    if not d1 or not d2:
+        return 50.0
+
+    days = (d1 - d2).days
+    if days < 0:
+        return 50.0
+
+    if days <= 14:
+        return 50.0
+    elif days <= 28:
+        return 55.0
+    elif days <= 60:
+        return 60.0  # Peak freshness
+    elif days <= 120:
+        return 55.0
+    elif days <= 180:
+        return 45.0
+    else:
+        return 35.0
+
+
+def calc_same_distance_performance(past_races: list, target_distance: int) -> float:
+    """Score based on past performance at similar distance (±200m).
+
+    Addresses gap: horses that ran well at 1200m but are now running 2000m
+    shouldn't get full credit for past performance.
+    """
+    if not past_races or target_distance <= 0:
+        return 50.0
+
+    matching_positions = []
+    for race in past_races[:6]:
+        dist = race.get("distance", 0)
+        pos = race.get("pos", 0)
+        if dist > 0 and pos > 0 and abs(dist - target_distance) <= 200:
+            matching_positions.append(pos)
+
+    if not matching_positions:
+        return 48.0  # No distance match = slight penalty
+
+    avg_pos = sum(matching_positions) / len(matching_positions)
+    # Convert avg position to 0-100 score
+    if avg_pos <= 1.5:
+        return 95.0
+    elif avg_pos <= 3:
+        return 80.0
+    elif avg_pos <= 5:
+        return 65.0
+    elif avg_pos <= 8:
+        return 50.0
+    else:
+        return 35.0
+
+
+def calc_same_surface_performance(past_races: list, target_surface: str) -> float:
+    """Score based on past performance on same surface (芝/ダ).
+
+    Addresses gap: dirt specialists on turf and vice versa get wrong scores.
+    """
+    if not past_races or not target_surface:
+        return 50.0
+
+    matching_positions = []
+    for race in past_races[:6]:
+        surf = race.get("surface", "")
+        pos = race.get("pos", 0)
+        if surf and pos > 0 and surf == target_surface:
+            matching_positions.append(pos)
+
+    if not matching_positions:
+        return 40.0  # No surface match = penalty (may be first time on this surface)
+
+    avg_pos = sum(matching_positions) / len(matching_positions)
+    if avg_pos <= 1.5:
+        return 95.0
+    elif avg_pos <= 3:
+        return 80.0
+    elif avg_pos <= 5:
+        return 65.0
+    elif avg_pos <= 8:
+        return 50.0
+    else:
+        return 35.0
+
+
+def calc_same_condition_performance(past_races: list, target_condition: str) -> float:
+    """Score based on past performance on similar track condition.
+
+    Groups: {良} vs {稍重, 重, 不良}. Horses that only ran on firm ground
+    shouldn't be highly rated on heavy ground.
+    """
+    if not past_races or not target_condition:
+        return 50.0
+
+    # Normalize condition into firm/soft categories
+    def is_firm(c):
+        return c == "良"
+
+    target_firm = is_firm(target_condition)
+
+    matching_positions = []
+    for race in past_races[:6]:
+        cond = race.get("condition", "")
+        pos = race.get("pos", 0)
+        if cond and pos > 0 and is_firm(cond) == target_firm:
+            matching_positions.append(pos)
+
+    if not matching_positions:
+        return 42.0  # No condition match = slight penalty
+
+    avg_pos = sum(matching_positions) / len(matching_positions)
+    if avg_pos <= 1.5:
+        return 90.0
+    elif avg_pos <= 3:
+        return 75.0
+    elif avg_pos <= 5:
+        return 60.0
+    elif avg_pos <= 8:
+        return 48.0
+    else:
+        return 35.0
+
+
 def _lookup_heavy_track(name: str) -> int | None:
     """Look up a sire/BMS name in SIRE_HEAVY_TRACK with partial matching."""
     if name in SIRE_HEAVY_TRACK:
