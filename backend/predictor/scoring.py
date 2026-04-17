@@ -94,6 +94,12 @@ ALL_FACTOR_KEYS = ["marketScore", "pastPerformance", "jockeyAbility",
 class WeightedScoringModel(PredictionModel):
     """Analytical-factor-driven prediction with market confirmation."""
 
+    def __init__(self, analytical_weights=None, market_weight=None):
+        """Optionally inject custom weights (avoids module-global mutation)."""
+        self._weights = analytical_weights or dict(ANALYTICAL_WEIGHTS)
+        self._market_weight = market_weight if market_weight is not None else MARKET_WEIGHT
+        self._analytical_weight = 1.0 - self._market_weight
+
     def predict(self, race_info: dict, entries: list[dict]) -> list[dict]:
         surface = race_info.get("surface", "芝")
         distance = race_info.get("distance", 2000)
@@ -151,8 +157,8 @@ class WeightedScoringModel(PredictionModel):
 
             # Analytical score (non-market factors only)
             analytical = sum(
-                factors[k] * ANALYTICAL_WEIGHTS[k]
-                for k in ANALYTICAL_WEIGHTS
+                factors[k] * self._weights.get(k, 0)
+                for k in self._weights
             )
 
             market = factors["marketScore"]
@@ -176,10 +182,10 @@ class WeightedScoringModel(PredictionModel):
                 })
                 continue
 
-            # Final blended score: 85% analytical + 15% market
+            # Final blended score
             final_score = (
-                d["analytical"] * ANALYTICAL_WEIGHT +
-                d["market"] * MARKET_WEIGHT
+                d["analytical"] * self._analytical_weight +
+                d["market"] * self._market_weight
             )
 
             predictions.append({

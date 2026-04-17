@@ -119,10 +119,8 @@ def check_bet_hit(bet, winners):
 def evaluate_weights_on_month(weights_vec, races_data, mc_samples=500):
     """Evaluate weights on one month using REAL bet_optimizer pipeline.
 
-    Returns (total_bet, total_payout, hit_count, bet_count).
+    Thread-safe: injects weights via constructor, no global mutation.
     """
-    # Inject weights into scoring module
-    from backend.predictor import scoring
     n = len(FACTOR_KEYS)
     factor_w = np.abs(weights_vec[:n])
     total_fw = factor_w.sum()
@@ -130,18 +128,11 @@ def evaluate_weights_on_month(weights_vec, races_data, mc_samples=500):
         factor_w = factor_w / total_fw
     market_w = float(np.clip(weights_vec[n], 0.0, 0.30))
 
-    # Save originals
-    orig_aw = dict(scoring.ANALYTICAL_WEIGHTS)
-    orig_mw = scoring.MARKET_WEIGHT
-    orig_sw = scoring.ANALYTICAL_WEIGHT
+    # Thread-safe: inject weights via constructor (no module-global mutation)
+    custom_weights = {k: float(w) for k, w in zip(FACTOR_KEYS, factor_w)}
+    predictor = WeightedScoringModel(analytical_weights=custom_weights, market_weight=market_w)
 
-    try:
-        for k, w in zip(FACTOR_KEYS, factor_w):
-            scoring.ANALYTICAL_WEIGHTS[k] = float(w)
-        scoring.MARKET_WEIGHT = market_w
-        scoring.ANALYTICAL_WEIGHT = 1.0 - market_w
-
-        predictor = WeightedScoringModel()
+    if True:
 
         total_bet = 0
         total_payout = 0
@@ -192,12 +183,6 @@ def evaluate_weights_on_month(weights_vec, races_data, mc_samples=500):
                         total_payout += int(odds * 100 * haircut)
 
         return total_bet, total_payout
-    finally:
-        # Restore originals
-        for k, v in orig_aw.items():
-            scoring.ANALYTICAL_WEIGHTS[k] = v
-        scoring.MARKET_WEIGHT = orig_mw
-        scoring.ANALYTICAL_WEIGHT = orig_sw
 
 
 def robust_objective(weights_vec, train_months_data, mc_samples=500):

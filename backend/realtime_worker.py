@@ -59,6 +59,7 @@ class RealtimeWorker:
         init_db()
         self.predictor = MLScoringModel()
         self.today = datetime.now().strftime("%Y%m%d")
+        self._start_time_cache = {}  # race_id → "HH:MM" (static per day)
 
     # ─── Step 1: Data Import ───
 
@@ -300,21 +301,24 @@ class RealtimeWorker:
         return race_ids
 
     def get_minutes_to_post(self, race_id: str) -> float:
-        """Get minutes until race start."""
-        db = get_session()
-        try:
-            status = db.query(RaceStatus).filter(RaceStatus.race_id == race_id).first()
-            if not status or not status.start_time:
-                return 999
+        """Get minutes until race start (uses in-memory cache, no DB hit per call)."""
+        if race_id not in self._start_time_cache:
+            db = get_session()
             try:
-                h, m = status.start_time.split(":")
-                now = datetime.now()
-                start = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
-                return (start - now).total_seconds() / 60
-            except Exception:
-                return 999
-        finally:
-            db.close()
+                status = db.query(RaceStatus).filter(RaceStatus.race_id == race_id).first()
+                self._start_time_cache[race_id] = status.start_time if status else ""
+            finally:
+                db.close()
+        st = self._start_time_cache.get(race_id, "")
+        if not st:
+            return 999
+        try:
+            h, m = st.split(":")
+            now = datetime.now()
+            start = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+            return (start - now).total_seconds() / 60
+        except Exception:
+            return 999
 
     def is_frozen(self, race_id: str) -> bool:
         db = get_session()
@@ -351,6 +355,7 @@ class RealtimeWorker:
             any_active = False
 
             for rid in race_ids:
+              try:
                 mins = self.get_minutes_to_post(rid)
                 course = COURSE_MAP.get(rid[4:6], "??")
                 rnum = int(rid[10:12])
@@ -384,6 +389,8 @@ class RealtimeWorker:
                     self.save_odds_to_db(rid, win_odds, combo_odds)
                     self.generate_and_save_predictions(rid)
                     time.sleep(0.5)
+              except Exception as e:
+                logger.error("Race %s failed: %s (continuing to next race)", rid, e)
 
             if not any_active:
                 # Check if all races are done

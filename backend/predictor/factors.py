@@ -8,6 +8,7 @@ and removes redundant bloodline factor.
 from __future__ import annotations
 
 import re
+from datetime import date as _date_type
 from .sire_data import get_sire_profile
 
 # Top jockeys with their overall ability ratings
@@ -448,8 +449,7 @@ def calc_days_since_last_race(past_races: list, current_date: str = "") -> float
         try:
             parts = s.replace("/", ".").split(".")
             if len(parts) == 3:
-                from datetime import date
-                return date(int(parts[0]), int(parts[1]), int(parts[2]))
+                return _date_type(int(parts[0]), int(parts[1]), int(parts[2]))
         except (ValueError, IndexError):
             pass
         return None

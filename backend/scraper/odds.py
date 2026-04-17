@@ -12,6 +12,67 @@ from bs4 import BeautifulSoup
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 
+# Shared netkeiba API type mapping (used by main.py, realtime_worker.py, etc.)
+NETKEIBA_TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
+API_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+
+def parse_combo_key(key_str):
+    """Parse '0508' -> [5,8] or '050812' -> [5,8,12]. Shared utility."""
+    nums = []
+    i = 0
+    while i < len(key_str):
+        if i + 1 < len(key_str):
+            nums.append(int(key_str[i:i + 2]))
+            i += 2
+        else:
+            i += 1
+    return nums
+
+
+def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None) -> dict:
+    """Fetch real-time combination odds from netkeiba API for a live race.
+
+    Shared by main.py, realtime_worker.py, export_predictions.py.
+    """
+    import json as _json
+    result = dict(fallback_odds or {})
+    for api_type, bet_type in NETKEIBA_TYPE_MAP.items():
+        try:
+            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type={api_type}&action=init"
+            r = requests.get(url, headers={
+                **API_HEADERS,
+                "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
+            }, timeout=5)
+            d = _json.loads(r.text)
+            data = d.get("data", {})
+            if not isinstance(data, dict):
+                continue
+            odds_dict = data.get("odds", {}).get(str(api_type), {})
+            if not odds_dict:
+                continue
+            entries = []
+            for combo_key, vals in odds_dict.items():
+                if not isinstance(vals, list) or len(vals) < 1:
+                    continue
+                try:
+                    odds_val = float(vals[0].replace(",", ""))
+                except (ValueError, TypeError):
+                    continue
+                if odds_val <= 0:
+                    continue
+                horses = parse_combo_key(combo_key)
+                if len(horses) >= 2:
+                    entries.append({"horses": horses, "odds": odds_val, "payout": int(odds_val * 100)})
+            if entries:
+                result[bet_type] = entries
+        except Exception:
+            pass
+    return result
+
 
 def fetch_combination_odds(race_id: str) -> dict:
     """Fetch actual payout data from db.netkeiba.com for completed races.

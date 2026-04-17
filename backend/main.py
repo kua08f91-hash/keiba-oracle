@@ -6,9 +6,12 @@ falls back to live computation otherwise.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import os
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 # Ensure backend package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -22,7 +25,7 @@ from backend.database.models import (
     PredictionsCache, RaceStatus,
 )
 from backend.scraper.netkeiba import fetch_race_list, fetch_race_card, fetch_pedigree_batch
-from backend.scraper.odds import fetch_combination_odds
+from backend.scraper.odds import fetch_combination_odds, fetch_live_combination_odds
 from backend.predictor.ml_scoring import MLScoringModel
 from backend.predictor.bet_optimizer import (
     optimize_bets, detect_race_pattern, scores_to_probabilities,
@@ -66,57 +69,8 @@ def _get_cached_predictions(race_id: str):
 
 
 def _fetch_live_combination_odds(race_id: str, fallback_odds: dict) -> dict:
-    """Fetch real-time odds for all bet types from netkeiba API."""
-    import requests as _req
-
-    API_H = {
-        "User-Agent": "Mozilla/5.0",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-    }
-    TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
-
-    def _parse_horse_nums(key_str):
-        nums = []
-        i = 0
-        while i < len(key_str):
-            if i + 1 < len(key_str):
-                nums.append(int(key_str[i:i+2]))
-                i += 2
-            else:
-                i += 1
-        return nums
-
-    result = dict(fallback_odds)
-    for api_type, bet_type in TYPE_MAP.items():
-        try:
-            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type={api_type}&action=init"
-            r = _req.get(url, headers=API_H, timeout=5)
-            d = json.loads(r.text)
-            data = d.get("data", {})
-            if not isinstance(data, dict):
-                continue
-            odds_dict = data.get("odds", {}).get(str(api_type), {})
-            if not odds_dict:
-                continue
-            entries = []
-            for combo_key, vals in odds_dict.items():
-                if not isinstance(vals, list) or len(vals) < 1:
-                    continue
-                try:
-                    odds_val = float(vals[0].replace(",", ""))
-                except (ValueError, TypeError):
-                    continue
-                if odds_val <= 0:
-                    continue
-                horses = _parse_horse_nums(combo_key)
-                if len(horses) >= 2:
-                    entries.append({"horses": horses, "odds": odds_val, "payout": int(odds_val * 100)})
-            if entries:
-                result[bet_type] = entries
-        except Exception:
-            pass
-    return result
+    """Fetch real-time odds — delegates to shared utility in scraper.odds."""
+    return fetch_live_combination_odds(race_id, fallback_odds)
 
 
 @app.on_event("startup")
@@ -306,7 +260,7 @@ def get_optimized_bets(race_id: str):
             "updatedAt": None,
         }
     except Exception as e:
-        print(f"Error in optimized-bets for {race_id}: {e}")
+        logger.error("Error in optimized-bets for %s: %s", race_id, e)
         return {"bets": [], "pattern": "", "raceId": race_id}
 
 

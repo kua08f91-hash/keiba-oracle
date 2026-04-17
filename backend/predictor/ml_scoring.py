@@ -37,46 +37,46 @@ class MLScoringModel(PredictionModel):
     """
 
     def __init__(self):
-        self._v5 = WeightedScoringModel()
         self._model_analytical = None
         self._model_combined = None
         self._analytical_columns = None
         self._all_columns = None
-        self._load_optimized_weights()
+        # Load optimized weights and inject into v5 via constructor (no global mutation)
+        opt_weights, opt_market = self._load_optimized_weights()
+        self._v5 = WeightedScoringModel(
+            analytical_weights=opt_weights,
+            market_weight=opt_market,
+        )
         self._load_ml_model()
 
     def _load_optimized_weights(self):
         """Load auto-optimized weights for v5 if available.
 
-        Skips loading if the saved weights don't match the current factor set
-        (e.g., old 12-factor file vs new 15-factor model).
+        Returns (weights_dict, market_weight) or (None, None) for defaults.
+        Does NOT mutate module globals.
         """
         if not os.path.exists(WEIGHTS_PATH):
-            return
+            return None, None
         try:
             with open(WEIGHTS_PATH, "r") as f:
                 data = json.load(f)
             weights = data.get("analytical_weights", {})
             market_weight = data.get("market_weight")
-            from . import scoring
-            expected_keys = set(scoring.ANALYTICAL_WEIGHTS.keys())
+            expected_keys = set(ANALYTICAL_WEIGHTS.keys())
             saved_keys = set(weights.keys())
             if saved_keys != expected_keys:
                 logger.warning(
                     "Optimized weights factor set mismatch (saved=%d, expected=%d) — using defaults",
                     len(saved_keys), len(expected_keys)
                 )
-                return
+                return None, None
             if weights:
-                for k, v in weights.items():
-                    scoring.ANALYTICAL_WEIGHTS[k] = v
-                if market_weight is not None:
-                    scoring.MARKET_WEIGHT = market_weight
-                    scoring.ANALYTICAL_WEIGHT = 1.0 - market_weight
                 logger.info("Loaded optimized weights from %s (version=%s)",
                             WEIGHTS_PATH, data.get("version", "?"))
+                return weights, market_weight
         except Exception as e:
             logger.warning("Failed to load optimized weights: %s", e)
+        return None, None
 
     def _load_ml_model(self):
         """Load ML models (for validation and weight optimization)."""
@@ -114,7 +114,7 @@ class MLScoringModel(PredictionModel):
 
         active_entries = [e for e in entries if not e.get("isScratched")]
         if len(active_entries) < 3:
-            return self._fallback.predict(race_info, entries)
+            return self._v5.predict(race_info, entries)
 
         context = extract_race_context(race_info, entries)
         all_weights = [e.get("weightCarried", 0) for e in active_entries]
