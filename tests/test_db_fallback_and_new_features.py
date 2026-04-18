@@ -176,8 +176,12 @@ class TestRaceListFromDb:
             result = _race_list_from_db("20260406")
         assert result[0]["races"][0]["start_time"] == ""
 
-    def test_courses_sorted_by_code(self):
-        """Multiple courses should be sorted ascending by course code."""
+    def test_courses_sorted_by_jra_standard_order(self):
+        """Courses sorted by JRA standard order (main venues first), not by code string.
+
+        COURSE_ORDER: 東京(05)=0, 中山(06)=1, 京都(08)=2, 阪神(09)=3, 札幌(01)=4, ...
+        This differs from alphabetical/code-string order where 01<05<06<08<09.
+        """
         from backend.main import _race_list_from_db
         races = [
             self._make_race("202604060901", 1, "未勝利", "09", "20260406"),
@@ -188,7 +192,70 @@ class TestRaceListFromDb:
         with patch("backend.main.get_session", return_value=session):
             result = _race_list_from_db("20260406")
         codes = [c["code"] for c in result]
-        assert codes == sorted(codes)
+        # JRA order: 東京(05)→中山(06)→阪神(09), NOT string order 05→06→09 (coincides here)
+        assert codes == ["05", "06", "09"]
+
+    def test_sort_order_nakayama_hanshin_fukushima(self):
+        """中山(06), 阪神(09), 福島(03) → JRA order is 中山, 阪神, 福島.
+
+        String sort would produce 03<06<09 (福島→中山→阪神).
+        JRA COURSE_ORDER: 06=1, 09=3, 03=6 → 中山→阪神→福島.
+        """
+        from backend.main import _race_list_from_db
+        races = [
+            self._make_race("202604060301", 1, "未勝利", "03", "20260406"),
+            self._make_race("202604060901", 1, "未勝利", "09", "20260406"),
+            self._make_race("202604060601", 1, "未勝利", "06", "20260406"),
+        ]
+        session = self._mock_session(races)
+        with patch("backend.main.get_session", return_value=session):
+            result = _race_list_from_db("20260406")
+        codes = [c["code"] for c in result]
+        assert codes == ["06", "09", "03"], f"Expected 中山→阪神→福島, got {codes}"
+
+    def test_sort_order_tokyo_first_among_main_venues(self):
+        """東京(05) must come before 中山(06) — both are main venues."""
+        from backend.main import _race_list_from_db
+        races = [
+            self._make_race("202604060601", 1, "未勝利", "06", "20260406"),
+            self._make_race("202604060501", 1, "未勝利", "05", "20260406"),
+        ]
+        session = self._mock_session(races)
+        with patch("backend.main.get_session", return_value=session):
+            result = _race_list_from_db("20260406")
+        codes = [c["code"] for c in result]
+        assert codes == ["05", "06"], f"Expected 東京→中山, got {codes}"
+
+    def test_sort_order_single_course_unchanged(self):
+        """Single course returns as-is regardless of sort order."""
+        from backend.main import _race_list_from_db
+        races = [
+            self._make_race("202604060301", 1, "未勝利", "03", "20260406"),
+            self._make_race("202604060302", 2, "1勝クラス", "03", "20260406"),
+        ]
+        session = self._mock_session(races)
+        with patch("backend.main.get_session", return_value=session):
+            result = _race_list_from_db("20260406")
+        assert len(result) == 1
+        assert result[0]["code"] == "03"
+        assert result[0]["name"] == "福島"
+
+    def test_sort_order_unknown_code_sorted_last(self):
+        """Unknown course code (not in COURSE_ORDER) is placed after all known venues."""
+        from backend.main import _race_list_from_db
+        races = [
+            self._make_race("202604069901", 1, "テスト", "99", "20260406"),
+            self._make_race("202604061001", 1, "未勝利", "10", "20260406"),
+            self._make_race("202604060501", 1, "未勝利", "05", "20260406"),
+        ]
+        session = self._mock_session(races)
+        with patch("backend.main.get_session", return_value=session):
+            result = _race_list_from_db("20260406")
+        codes = [c["code"] for c in result]
+        # 東京(05)=0, 小倉(10)=9 are known; 99 is unknown → sorted last
+        assert codes.index("05") < codes.index("99")
+        assert codes.index("10") < codes.index("99")
+        assert codes[-1] == "99"
 
     def test_racecourse_code_fallback_from_race_id(self):
         """When racecourse_code is None, fall back to characters 4-6 of race_id.
