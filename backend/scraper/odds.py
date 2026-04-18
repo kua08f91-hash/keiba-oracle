@@ -13,7 +13,8 @@ from bs4 import BeautifulSoup
 HEADERS = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 
 # Shared netkeiba API type mapping (used by main.py, realtime_worker.py, etc.)
-NETKEIBA_TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
+# netkeiba API type mapping: 1=単勝, 2=複勝, 3=枠連, 4=馬連, 5=ワイド, 6=馬単, 7=3連複, 8=3連単
+NETKEIBA_TYPE_MAP = {4: "umaren", 5: "wide", 6: "umatan", 7: "sanrenpuku", 8: "sanrentan"}
 API_HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "X-Requested-With": "XMLHttpRequest",
@@ -33,14 +34,21 @@ def parse_combo_key(key_str):
     return nums
 
 
-def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None) -> dict:
+def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None, include_win_place: bool = False) -> dict:
     """Fetch real-time combination odds from netkeiba API for a live race.
 
     Shared by main.py, realtime_worker.py, export_predictions.py.
+
+    Args:
+        include_win_place: If True, also fetch type=1 (単勝) and type=2 (複勝).
     """
     import json as _json
+    type_map = dict(NETKEIBA_TYPE_MAP)
+    if include_win_place:
+        type_map[1] = "tansho"
+        type_map[2] = "fukusho"
     result = dict(fallback_odds or {})
-    for api_type, bet_type in NETKEIBA_TYPE_MAP.items():
+    for api_type, bet_type in type_map.items():
         try:
             url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type={api_type}&action=init"
             r = requests.get(url, headers={
@@ -65,7 +73,9 @@ def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None) -> dic
                 if odds_val <= 0:
                     continue
                 horses = parse_combo_key(combo_key)
-                if len(horses) >= 2:
+                # tansho/fukusho have 1 horse, others have 2-3
+                min_horses = 1 if bet_type in ("tansho", "fukusho") else 2
+                if len(horses) >= min_horses:
                     entries.append({"horses": horses, "odds": odds_val, "payout": int(odds_val * 100)})
             if entries:
                 result[bet_type] = entries

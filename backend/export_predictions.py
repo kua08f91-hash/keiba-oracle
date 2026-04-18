@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.database.db import init_db
 from backend.scraper.netkeiba import fetch_race_list, fetch_race_card
-from backend.scraper.odds import estimate_from_entries, fetch_combination_odds
+from backend.scraper.odds import estimate_from_entries, fetch_combination_odds, fetch_live_combination_odds
 from backend.predictor.ml_scoring import MLScoringModel
 from backend.predictor.bet_optimizer import (
     optimize_bets, detect_race_pattern, scores_to_probabilities,
@@ -52,43 +52,8 @@ def fetch_live_odds(rid):
 
 
 def fetch_combination_odds_live(rid):
-    """Fetch real-time combination odds."""
-    TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
-    result = {}
-    for api_type, bet_type in TYPE_MAP.items():
-        try:
-            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={rid}&type={api_type}&action=init"
-            r = requests.get(url, headers={**API_H, "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={rid}"}, timeout=5)
-            d = json.loads(r.text)
-            data = d.get("data", {})
-            if not isinstance(data, dict):
-                continue
-            odds_dict = data.get("odds", {}).get(str(api_type), {})
-            entries = []
-            for combo_key, vals in odds_dict.items():
-                if not isinstance(vals, list) or len(vals) < 1:
-                    continue
-                try:
-                    odds_val = float(vals[0].replace(",", ""))
-                except:
-                    continue
-                if odds_val <= 0:
-                    continue
-                nums = []
-                i = 0
-                while i < len(combo_key):
-                    if i + 1 < len(combo_key):
-                        nums.append(int(combo_key[i:i + 2]))
-                        i += 2
-                    else:
-                        i += 1
-                if len(nums) >= 2:
-                    entries.append({"horses": nums, "odds": odds_val, "payout": int(odds_val * 100)})
-            if entries:
-                result[bet_type] = entries
-        except:
-            pass
-    return result
+    """Fetch real-time combination odds — delegates to shared utility."""
+    return fetch_live_combination_odds(rid)
 
 
 def main():
@@ -147,11 +112,14 @@ def main():
                 preds = predictor.predict(info, entries)
                 ranked = sorted([p for p in preds if p["score"] > 0], key=lambda p: -p["score"])
 
-                # Bets
+                # Fetch ALL real odds from netkeiba API (tansho/fukusho/umaren/wide/sanrenpuku/sanrentan)
+                time.sleep(0.5)
                 od = estimate_from_entries(entries) or {}
-                live_od = fetch_combination_odds_live(rid)
-                od.update(live_od)
-                bets = optimize_bets(preds, od, info)
+                live_od = fetch_live_combination_odds(rid, include_win_place=True)
+                if live_od:
+                    od.update(live_od)  # Real odds override estimates
+
+                bets = optimize_bets(preds, od, info, entries=entries)
 
                 # Pattern
                 head_count = info.get("headCount", 16)
