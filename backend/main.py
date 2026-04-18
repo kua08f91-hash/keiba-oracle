@@ -70,9 +70,11 @@ def _race_list_from_db(date_str: str) -> list:
                 "race_name": r.race_name, "raceName": r.race_name,
                 "start_time": r.start_time or "", "grade": r.grade,
             })
+        # Sort courses: main venues first (東京/中山, 京都/阪神), then locals
+        COURSE_ORDER = {"05":0,"06":1,"08":2,"09":3,"01":4,"02":5,"03":6,"04":7,"07":8,"10":9}
         return [{"code": code, "name": COURSE_MAP.get(code, code),
                  "races": sorted(rs, key=lambda x: x["race_number"])}
-                for code, rs in sorted(by_course.items())]
+                for code, rs in sorted(by_course.items(), key=lambda x: COURSE_ORDER.get(x[0], 99))]
     finally:
         db.close()
 
