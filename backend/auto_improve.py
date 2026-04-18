@@ -95,6 +95,13 @@ def collect_recent_results(weeks_back: int = 2) -> list:
 
             schedules = fetch_race_list(date_str)
             if not schedules:
+                # Fallback: try DB cache
+                try:
+                    from backend.main import _race_list_from_db
+                    schedules = _race_list_from_db(date_str)
+                except Exception:
+                    pass
+            if not schedules:
                 continue
 
             for schedule in schedules:
@@ -108,9 +115,20 @@ def collect_recent_results(weeks_back: int = 2) -> list:
                     if not data:
                         continue
 
-                    # Fetch results
+                    # Fetch results (netkeiba → keibabook fallback)
                     time.sleep(1)
                     results = fetch_result_positions(race_id)
+                    if not results:
+                        # Fallback: try keibabook
+                        try:
+                            from backend.scraper.keibabook import fetch_race_result
+                            kb_result = fetch_race_result(race_id)
+                            if kb_result and kb_result.get("finish"):
+                                results = {str(f["horseNumber"]): f["pos"] for f in kb_result["finish"]}
+                                if results:
+                                    print(f"      (keibabook fallback used)")
+                        except Exception:
+                            pass
                     if not results:
                         continue
 
