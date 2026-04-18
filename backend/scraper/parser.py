@@ -8,6 +8,55 @@ from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
 
+# Known JRA graded race names — used to cross-validate icon-based grade detection
+# (netkeiba uses Icon_GradeType2/3 for Listed/Open races too, causing false positives)
+_KNOWN_GRADED = {
+    "GI": [
+        "フェブラリーS","高松宮記念","大阪杯","桜花賞","皐月賞","天皇賞",
+        "NHKマイルC","NHKマイル","ヴィクトリアマイル","オークス","日本ダービー",
+        "東京優駿","安田記念","宝塚記念","スプリンターズS","秋華賞","菊花賞",
+        "エリザベス女王杯","マイルCS","ジャパンC","チャンピオンズC","有馬記念",
+        "ホープフルS","朝日杯FS","阪神JF",
+        "中山グランドジャンプ","中山GJ","中山大障害",
+    ],
+    "GII": [
+        "日経新春杯","アメリカJCC","東海S","京都記念","共同通信杯",
+        "きさらぎ賞","京都牝馬S","中山記念","阪急杯","チューリップ賞","弥生賞",
+        "金鯱賞","フィリーズR","フィリーズレビュー","スプリングS","日経賞",
+        "阪神大賞典","毎日杯","マイラーズC","フローラS","青葉賞",
+        "京王杯SC","目黒記念","京都新聞杯",
+        "札幌記念","セントウルS","ローズS","オールカマー","神戸新聞杯",
+        "セントライト記念","京都大賞典","府中牝馬S","富士S","スワンS",
+        "デイリー杯","京阪杯","アルゼンチン共和国杯","ステイヤーズS",
+        "阪神カップ","阪神C","阪神牝馬S",
+        "東京ハイジャンプ","阪神スプリングジャンプ","東京オータムジャンプ","京都ハイジャンプ",
+    ],
+    "GIII": [
+        "中山金杯","京都金杯","シンザン記念","フェアリーS","京成杯",
+        "愛知杯","東京新聞杯","シルクロードS","根岸S","小倉大賞典",
+        "ダイヤモンドS","アーリントンC","中山牝馬S","フラワーC","ファルコンS",
+        "オーシャンS","ダービー卿CT","ダービーCT","マーガレットS","アンタレスS",
+        "ニュージーランドT","NZT","AJC",
+        "福島牝馬S","新潟大賞典","葵S","鳴尾記念","エプソムC",
+        "函館スプリントS","マーメイドS","ユニコーンS","CBC賞","ラジオNIKKEI賞",
+        "プロキオンS","七夕賞","函館記念","中京記念","小倉記念","関屋記念",
+        "エルムS","北九州記念","札幌2歳S","キーンランドC","新潟記念",
+        "紫苑S","レパードS","シリウスS","みやこS","武蔵野S",
+        "ファンタジーS","東京スポーツ杯","京都2歳S","サウジアラビアRC",
+        "ターコイズS","カペラS","中日新聞杯","チャーチルC","マーチS",
+        "京成杯AH","京成杯オータムH","チャレンジC",
+        "京都ジャンプS","阪神ジャンプS","新潟ジャンプS",
+    ],
+}
+
+
+def _is_known_graded(race_name: str, grade: str) -> bool:
+    """Check if race name matches a known graded race."""
+    for key in _KNOWN_GRADED.get(grade, []):
+        if race_name == key or race_name.startswith(key):
+            return True
+    return False
+
 
 def parse_race_list(html: str) -> list:
     """Parse race list page and return racecourse schedules."""
@@ -107,24 +156,27 @@ def _parse_race_info(soup: BeautifulSoup) -> dict:
     race_name_el = soup.select_one(".RaceName")
     if race_name_el:
         info["raceName"] = race_name_el.get_text(strip=True)
-        # Check for grade icons
-        # Flat: Icon_GradeType1 (GI), 2 (GII), 3 (GIII)
-        # Jumps: Icon_GradeType15/12 (GI障害), 16/13 (GII障害), 17/14 (GIII障害)
+        # Grade detection: Icon_GradeType1 is reliable for GI only.
+        # GII/GIII icons (Type2/3) are also used for Listed/Open races on netkeiba,
+        # so we cross-validate with known graded race names to avoid false positives.
+        name = info["raceName"]
         if race_name_el.select_one(".Icon_GradeType1, .Icon_GradeType15, .Icon_GradeType12"):
             info["grade"] = "GI"
         elif race_name_el.select_one(".Icon_GradeType2, .Icon_GradeType16, .Icon_GradeType13"):
-            info["grade"] = "GII"
-        elif race_name_el.select_one(".Icon_GradeType3, .Icon_GradeType17, .Icon_GradeType14"):
-            info["grade"] = "GIII"
-        # Name-based fallback for known jumps races (icons sometimes missing)
-        if info["grade"] is None:
-            name = info["raceName"]
-            if "中山グランドジャンプ" in name or "中山大障害" in name:
-                info["grade"] = "GI"
-            elif any(k in name for k in ["東京ハイジャンプ", "阪神スプリングジャンプ",
-                                          "東京オータムジャンプ", "京都ハイジャンプ"]):
+            # Cross-validate: only set GII if name matches known GII races
+            if _is_known_graded(name, "GII"):
                 info["grade"] = "GII"
-            elif "京都ジャンプ" in name or "阪神ジャンプ" in name or "新潟ジャンプ" in name:
+        elif race_name_el.select_one(".Icon_GradeType3, .Icon_GradeType17, .Icon_GradeType14"):
+            # Cross-validate: only set GIII if name matches known GIII races
+            if _is_known_graded(name, "GIII"):
+                info["grade"] = "GIII"
+        # Name-based fallback for known races without icons
+        if info["grade"] is None:
+            if _is_known_graded(name, "GI"):
+                info["grade"] = "GI"
+            elif _is_known_graded(name, "GII"):
+                info["grade"] = "GII"
+            elif _is_known_graded(name, "GIII"):
                 info["grade"] = "GIII"
 
     # Race number
