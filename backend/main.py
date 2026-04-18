@@ -72,8 +72,8 @@ def _get_cached_predictions(race_id: str):
 
 
 def _fetch_live_combination_odds(race_id: str, fallback_odds: dict) -> dict:
-    """Fetch real-time odds — delegates to shared utility in scraper.odds."""
-    return fetch_live_combination_odds(race_id, fallback_odds)
+    """Fetch real-time odds for all types including tansho/fukusho range."""
+    return fetch_live_combination_odds(race_id, fallback_odds, include_win_place=True)
 
 
 @app.on_event("startup")
