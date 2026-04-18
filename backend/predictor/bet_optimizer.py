@@ -268,12 +268,19 @@ def find_odds_for_bet(bet: Dict, odds_data: Dict) -> Optional[Dict]:
     entries = odds_data[bet_type]
     for entry in entries:
         entry_horses = entry.get("horses", [])
+        matched = False
         if ordered or bet_type in ("sanrentan", "umatan"):
-            if entry_horses == horses:
-                return {"odds": entry["odds"], "payout": entry["payout"]}
+            matched = entry_horses == horses
         else:
-            if set(entry_horses) == set(horses):
-                return {"odds": entry["odds"], "payout": entry["payout"]}
+            matched = set(entry_horses) == set(horses)
+        if matched:
+            result = {"odds": entry["odds"], "payout": entry["payout"]}
+            # Preserve range odds for ワイド/複勝 display
+            if "oddsMin" in entry:
+                result["oddsMin"] = entry["oddsMin"]
+            if "oddsMax" in entry:
+                result["oddsMax"] = entry["oddsMax"]
+            return result
 
     return None
 
@@ -370,6 +377,11 @@ def optimize_bets(
             candidate["odds"] = odds_info["odds"]
             candidate["payout"] = odds_info["payout"]
             candidate["hasRealOdds"] = True
+            # Preserve range for ワイド/複勝 display
+            if "oddsMin" in odds_info:
+                candidate["oddsMin"] = odds_info["oddsMin"]
+            if "oddsMax" in odds_info:
+                candidate["oddsMax"] = odds_info["oddsMax"]
             base_ev = ai_hit * odds_info["odds"] - 1.0
             market_implied_hit = 1.0 / odds_info["odds"] if odds_info["odds"] > 0 else ai_hit
             edge = ai_hit - market_implied_hit

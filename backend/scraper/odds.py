@@ -62,21 +62,38 @@ def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None, includ
             odds_dict = data.get("odds", {}).get(str(api_type), {})
             if not odds_dict:
                 continue
+            # ワイド/複勝 have range odds: vals=[min, max, popularity]
+            # Others have single odds: vals=[odds, 0, popularity]
+            is_range_type = bet_type in ("wide", "fukusho")
             entries = []
             for combo_key, vals in odds_dict.items():
                 if not isinstance(vals, list) or len(vals) < 1:
                     continue
                 try:
-                    odds_val = float(vals[0].replace(",", ""))
+                    odds_min = float(vals[0].replace(",", ""))
                 except (ValueError, TypeError):
                     continue
-                if odds_val <= 0:
+                if odds_min <= 0:
                     continue
+                # Parse range max for ワイド/複勝
+                odds_max = odds_min
+                if is_range_type and len(vals) >= 2:
+                    try:
+                        om = float(vals[1].replace(",", ""))
+                        if om > 0:
+                            odds_max = om
+                    except (ValueError, TypeError):
+                        pass
+                # Use midpoint for range types, exact value for others
+                odds_val = (odds_min + odds_max) / 2 if is_range_type else odds_min
                 horses = parse_combo_key(combo_key)
-                # tansho/fukusho have 1 horse, others have 2-3
                 min_horses = 1 if bet_type in ("tansho", "fukusho") else 2
                 if len(horses) >= min_horses:
-                    entries.append({"horses": horses, "odds": odds_val, "payout": int(odds_val * 100)})
+                    entry = {"horses": horses, "odds": round(odds_val, 1), "payout": int(odds_val * 100)}
+                    if is_range_type:
+                        entry["oddsMin"] = odds_min
+                        entry["oddsMax"] = odds_max
+                    entries.append(entry)
             if entries:
                 result[bet_type] = entries
         except Exception:
