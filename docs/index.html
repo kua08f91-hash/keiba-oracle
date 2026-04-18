@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>KEIBA ORACLE</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{navy:{900:'#0a0f1a',800:'#111827',700:'#1a2332',600:'#243044'},gold:{400:'#d4a853',500:'#c99a2e',600:'#a87d1f'}}}}}</script>
@@ -79,17 +82,8 @@ function showDetail(raceId){document.getElementById("page-list").classList.remov
 
 // Reload latest state: clear all caches and re-init from the list page
 async function reloadLatest(){
-  const icon=document.getElementById("reloadIcon");
-  if(icon){icon.classList.add("animate-spin");}
-  // Clear all caches
-  staticData=null;
-  scheduleCache={};
-  weekData=[];
-  showList();
-  // Brief delay to show spin animation, then re-init
-  setTimeout(async()=>{
-    try{await init();}finally{if(icon){icon.classList.remove("animate-spin");}}
-  },200);
+  // Force full page reload to bust browser + CDN cache
+  window.location.href = window.location.pathname + '?_t=' + Date.now();
 }
 
 let staticData = null; // Pre-exported predictions JSON
