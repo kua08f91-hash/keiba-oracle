@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.database.db import init_db, get_session
 from backend.database.models import (
-    HorseEntry, OddsSnapshot, CombinationOdds,
+    Race, HorseEntry, OddsSnapshot, CombinationOdds,
     PredictionsCache, RaceStatus,
 )
 from backend.scraper.netkeiba import fetch_race_list, fetch_race_card, fetch_pedigree_batch
@@ -46,6 +46,35 @@ app.add_middleware(
 )
 
 predictor = MLScoringModel()
+
+COURSE_MAP = {
+    "01":"札幌","02":"函館","03":"福島","04":"新潟","05":"東京",
+    "06":"中山","07":"中京","08":"京都","09":"阪神","10":"小倉",
+}
+
+
+def _race_list_from_db(date_str: str) -> list:
+    """Build race list from DB cache (fallback when netkeiba is rate-limited)."""
+    from collections import defaultdict
+    db = get_session()
+    try:
+        races = db.query(Race).filter(Race.date == date_str).order_by(Race.race_id).all()
+        if not races:
+            return []
+        by_course = defaultdict(list)
+        for r in races:
+            code = r.racecourse_code or r.race_id[4:6]
+            by_course[code].append({
+                "race_id": r.race_id, "raceId": r.race_id,
+                "race_number": r.race_number, "raceNumber": r.race_number,
+                "race_name": r.race_name, "raceName": r.race_name,
+                "start_time": r.start_time or "", "grade": r.grade,
+            })
+        return [{"code": code, "name": COURSE_MAP.get(code, code),
+                 "races": sorted(rs, key=lambda x: x["race_number"])}
+                for code, rs in sorted(by_course.items())]
+    finally:
+        db.close()
 
 
 def _get_cached_predictions(race_id: str):
@@ -93,6 +122,8 @@ def get_race_list(date: str):
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYYMMDD.")
 
     schedules = fetch_race_list(date)
+    if not schedules:
+        schedules = _race_list_from_db(date)
     return schedules
 
 
@@ -293,15 +324,15 @@ def get_race_dates(weeks: int = 3):
             scan_dates.add(current)
         current += timedelta(days=1)
 
+    dow_names = ["月", "火", "水", "木", "金", "土", "日"]
     for dt in sorted(scan_dates):
         date_str = dt.strftime("%Y%m%d")
         schedules = fetch_race_list(date_str)
+        # Fallback: check DB cache if netkeiba is rate-limited
+        if not schedules:
+            schedules = _race_list_from_db(date_str)
         if schedules and any(s.get("races") for s in schedules):
-            dow_names = ["月", "火", "水", "木", "金", "土", "日"]
             dow = dow_names[dt.weekday()]
-
-            # Determine week label
-            # "今週" = current Mon-Sun block
             today_monday = today - timedelta(days=today.weekday())
             dt_monday = dt - timedelta(days=dt.weekday())
             week_diff = (dt_monday - today_monday).days // 7

@@ -71,31 +71,50 @@
 <script>
 const API = "http://localhost:8000/api";
 let weekData=[], activeDate="", scheduleCache={};
+let staticData = null;
 
 function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
 function showDetail(raceId){document.getElementById("page-list").classList.remove("active");document.getElementById("page-detail").classList.add("active");window.scrollTo(0,0);loadRaceDetail(raceId);}
 
-// Reload latest state: clear all caches and re-init from the list page
 async function reloadLatest(){
-  const icon=document.getElementById("reloadIcon");
-  if(icon){icon.classList.add("animate-spin");}
-  scheduleCache={};
-  weekData=[];
-  showList();
-  setTimeout(async()=>{
-    try{await init();}finally{if(icon){icon.classList.remove("animate-spin");}}
-  },200);
+  window.location.href = window.location.pathname + '?_t=' + Date.now();
 }
 
 async function init(){
   document.getElementById("apiStatus").textContent="Connecting...";
-  try{const r=await fetch(`${API}/race-dates?weeks=3`);if(!r.ok)throw 0;weekData=await r.json();document.getElementById("apiStatus").textContent="";}
-  catch(e){document.getElementById("apiStatus").innerHTML='<span class="text-red-400">Backend offline</span> — <code class="bg-gray-200 px-1 rounded text-gray-600">python3 -m uvicorn backend.main:app --port 8000</code>';return;}
-  if(!weekData.length){document.getElementById("raceList").innerHTML='<div class="bg-white rounded-xl shadow text-center py-16 text-gray-400 font-bold">No races found</div>';return;}
-  const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const future=weekData.filter(d=>d.date>=today);
-  activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
-  renderDateTabs();loadAndRenderDay(activeDate);
+
+  // Try API first
+  try{
+    const r=await fetch(`${API}/race-dates?weeks=3`,{signal:AbortSignal.timeout(5000)});
+    if(r.ok){
+      const d=await r.json();
+      if(d&&d.length>0){
+        weekData=d;
+        document.getElementById("apiStatus").innerHTML='<span class="text-green-500 text-[10px]">Live</span>';
+        const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+        const future=weekData.filter(d=>d.date>=today);
+        activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+        renderDateTabs();loadAndRenderDay(activeDate);return;
+      }
+    }
+  }catch(e){}
+
+  // Fallback: static JSON (docs/data/predictions.json)
+  try{
+    const base = window.location.href.replace(/\/[^/]*$/,'');
+    const r = await fetch(`${base}/docs/data/predictions.json?_t=${Date.now()}`);
+    if(r.ok){
+      staticData = await r.json();
+      weekData = staticData.map(d=>({date:d.date,display:d.display,weekLabel:"",courses:d.courses.map(c=>c.name)}));
+      document.getElementById("apiStatus").innerHTML='<span class="text-amber-500 text-[10px]">Offline (静的データ)</span>';
+      const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const future=weekData.filter(d=>d.date>=today);
+      activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+      renderDateTabs();loadAndRenderDay(activeDate);return;
+    }
+  }catch(e){}
+
+  document.getElementById("apiStatus").innerHTML='<span class="text-red-400">データ読み込み失敗</span>';
 }
 
 const DOW=["日","月","火","水","木","金","土"];
@@ -121,11 +140,21 @@ async function loadAndRenderDay(ds){
   const el=document.getElementById("raceList");
   if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
   el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
-  try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`);const data=await r.json();
-    // Preserve grade info via raceInfo so gradeTag can read it
+
+  // Try static data first (works even when API is rate-limited)
+  if(staticData){
+    const dayData=staticData.find(d=>d.date===ds);
+    if(dayData){
+      const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>({raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,raceInfo:r.raceInfo||{},startTime:r.raceInfo?.startTime||""}))}));
+      scheduleCache[ds]=sc;renderDay(sc,ds);return;
+    }
+  }
+
+  // Fallback: API
+  try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(5000)});const data=await r.json();
     const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
     scheduleCache[ds]=sc;renderDay(sc,ds);
-  }catch(e){el.innerHTML='<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">Failed to load</div>';}
+  }catch(e){el.innerHTML='<div class="bg-white rounded-xl shadow text-center py-12 text-gray-400">データ読み込み失敗</div>';}
 }
 
 function isSpecial(n){return n.includes("特別")||n.includes("ステークス")||n.includes("賞")||n.includes("カップ")||n.includes("GI")||n.includes("GII")||n.includes("GIII")||n.includes("Listed")||n.includes("オープン");}
@@ -259,14 +288,35 @@ async function loadRaceDetail(id){
   const el=document.getElementById("detail-content");
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
+
+  // Try static data first (works when API is rate-limited)
+  let usedStatic=false;
+  if(staticData){
+    for(const day of staticData){
+      for(const course of day.courses||[]){
+        const race=(course.races||[]).find(r=>r.raceId===id);
+        if(race){
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          renderDetail(race.raceInfo||{},"");
+          const pb=document.getElementById("detail-pattern");
+          if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
+          renderBets();usedStatic=true;break;
+        }
+      }
+      if(usedStatic)break;
+    }
+    if(usedStatic)return;
+  }
+
+  // Fallback: API
   try{
-    const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`);if(!cr.ok)throw Error("Not found");
+    const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});if(!cr.ok)throw Error("Not found");
     const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
     renderDetail(c.raceInfo,"");
     try{
       const be=document.getElementById("bets");
       if(be)be.innerHTML='<div class="px-4 py-4 text-center"><div class="animate-spin inline-block w-5 h-5 border-2 border-navy-800 border-t-gold-400 rounded-full"></div><span class="text-xs text-gray-400 ml-2">Calculating bets...</span></div>';
-      const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`);
+      const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});
       if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
