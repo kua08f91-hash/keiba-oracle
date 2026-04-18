@@ -72,9 +72,12 @@
 </div>
 
 <script>
-// Auto-detect: use localhost only when running locally; GitHub Pages uses static JSON only
+// Auto-detect API endpoint:
+// 1. localhost → local backend
+// 2. GitHub Pages → cloud backend (Render) → fallback to static JSON
 const _isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-const API = _isLocal ? "http://localhost:8000/api" : null;
+const _CLOUD_API = "https://keiba-oracle-api.onrender.com/api";
+const API = _isLocal ? "http://localhost:8000/api" : _CLOUD_API;
 let weekData=[], activeDate="", scheduleCache={};
 
 function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
@@ -107,10 +110,17 @@ async function init(){
     }
   } catch(e) {}
 
-  // Fallback: live API (only available when running locally)
-  if(!API){document.getElementById("apiStatus").innerHTML='<span class="text-gray-400">静的データモード — 予想データは事前エクスポート版です</span>';return;}
-  try{const r=await fetch(`${API}/race-dates?weeks=3`);if(!r.ok)throw 0;weekData=await r.json();document.getElementById("apiStatus").textContent="";}
-  catch(e){document.getElementById("apiStatus").innerHTML='<span class="text-gray-400">バックエンド未接続</span>';return;}
+  // Fallback: live API (local or cloud)
+  if(API){
+    try{const r=await fetch(`${API}/race-dates?weeks=3`,{signal:AbortSignal.timeout(8000)});if(!r.ok)throw 0;weekData=await r.json();document.getElementById("apiStatus").innerHTML=_isLocal?'':'<span class="text-green-500 text-[10px]">Live</span>';
+      const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+      const future=weekData.filter(d=>d.date>=today);
+      activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+      renderDateTabs();loadAndRenderDay(activeDate);return;
+    }catch(e){}
+  }
+  // Final fallback: static data message
+  if(!staticData){document.getElementById("apiStatus").innerHTML='<span class="text-gray-400">データを読み込めません</span>';return;}
   if(!weekData.length){document.getElementById("raceList").innerHTML='<div class="bg-white rounded-xl shadow text-center py-16 text-gray-400 font-bold">No races found</div>';return;}
   const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
   const future=weekData.filter(d=>d.date>=today);
@@ -151,11 +161,14 @@ async function loadAndRenderDay(ds){
       scheduleCache[ds]=sc;renderDay(sc,ds);return;
     }
   }
-  // Fallback: API
-  try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`);const data=await r.json();
-    const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
-    scheduleCache[ds]=sc;renderDay(sc,ds);
-  }catch(e){el.innerHTML='<div class="bg-red-50 border border-red-200 rounded-xl p-4 text-red-600 text-sm">Failed to load</div>';}
+  // Fallback: API (local or cloud)
+  if(API){
+    try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});const data=await r.json();
+      const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
+      scheduleCache[ds]=sc;renderDay(sc,ds);return;
+    }catch(e){}
+  }
+  el.innerHTML='<div class="bg-white rounded-xl shadow text-center py-12 text-gray-400">データ読み込み失敗</div>';
 }
 
 function isSpecial(n){return n.includes("特別")||n.includes("ステークス")||n.includes("賞")||n.includes("カップ")||n.includes("GI")||n.includes("GII")||n.includes("GIII")||n.includes("Listed")||n.includes("オープン");}

@@ -37,7 +37,10 @@ app = FastAPI(title="JRA Prediction API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8080", "null"],
+    allow_origins=[
+        "http://localhost:3000", "http://localhost:8080", "null",
+        "https://kua08f91-hash.github.io",  # GitHub Pages
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
