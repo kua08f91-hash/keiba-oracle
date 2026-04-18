@@ -184,12 +184,40 @@ def main():
         if day_data["courses"]:
             all_dates_data.append(day_data)
 
+    # Collect last week's performance stats
+    perf = _load_performance_stats()
+
     # Save
+    output = {
+        "predictions": all_dates_data,
+        "performance": perf,
+    }
     output_file = os.path.join(DOCS_DIR, "predictions.json")
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(all_dates_data, f, ensure_ascii=False)
+        json.dump(output, f, ensure_ascii=False)
 
     print(f"\nExported to {output_file} ({os.path.getsize(output_file) // 1024} KB)")
+
+
+def _load_performance_stats() -> dict:
+    """Load recent performance stats from performance_log.json."""
+    perf_file = os.path.join(os.path.dirname(DOCS_DIR), "data", "performance_log.json")
+    try:
+        if os.path.exists(perf_file):
+            with open(perf_file, "r", encoding="utf-8") as f:
+                logs = json.load(f)
+            if logs and isinstance(logs, list):
+                latest = logs[-1]
+                return {
+                    "date": latest.get("date", ""),
+                    "tansho": latest.get("tansho", 0),
+                    "wide": latest.get("wide", 0),
+                    "winnerInTop3": latest.get("winner_in_top3", 0),
+                    "races": latest.get("races", 0),
+                }
+    except Exception:
+        pass
+    return {}
 
 
 if __name__ == "__main__":

@@ -102,14 +102,42 @@ def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None, includ
 
 
 def fetch_combination_odds(race_id: str) -> dict:
-    """Fetch actual payout data from db.netkeiba.com for completed races.
+    """Fetch actual payout data for completed races.
 
+    Tries db.netkeiba.com first, falls back to keibabook.co.jp.
     Returns dict with keys: tansho, fukusho, umaren, wide, sanrenpuku, sanrentan
-    Each value is a list of {horses: list, odds: float, payout: int, ordered: bool}
-    Returns empty dict if no payout data found.
     """
     payouts = _fetch_payouts_from_db(race_id)
-    return payouts or {}
+    if payouts:
+        return payouts
+
+    # Fallback: keibabook
+    try:
+        from .keibabook import fetch_race_result
+        kb = fetch_race_result(race_id)
+        if kb and kb.get("payouts"):
+            # Convert keibabook format to our format
+            result = {}
+            label_map = {
+                "単勝": "tansho", "複勝": "fukusho", "枠連": "wakuren",
+                "馬連": "umaren", "馬単": "umatan", "ワイド": "wide",
+                "三連複": "sanrenpuku", "三連単": "sanrentan",
+            }
+            for label, entries in kb["payouts"].items():
+                key = label_map.get(label, label)
+                if key not in result:
+                    result[key] = []
+                for e in entries:
+                    result[key].append({
+                        "horses": e["nums"],
+                        "odds": e["amount"] / 100,
+                        "payout": e["amount"],
+                    })
+            return result
+    except Exception:
+        pass
+
+    return {}
 
 
 def _fetch_payouts_from_db(race_id: str) -> dict | None:
