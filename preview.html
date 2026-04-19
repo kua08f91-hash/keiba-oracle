@@ -81,16 +81,19 @@ async function reloadLatest(){
 }
 
 async function init(){
-  document.getElementById("apiStatus").textContent="Connecting...";
+  document.getElementById("apiStatus").textContent="Loading...";
 
-  // Try API first
+  // PRIMARY: static JSON (same data as GitHub Pages — ensures consistency)
   try{
-    const r=await fetch(`${API}/race-dates?weeks=3`,{signal:AbortSignal.timeout(5000)});
+    const base = window.location.href.replace(/\/[^/]*$/,'');
+    const r = await fetch(`${base}/docs/data/predictions.json?_t=${Date.now()}`);
     if(r.ok){
-      const d=await r.json();
-      if(d&&d.length>0){
-        weekData=d;
-        document.getElementById("apiStatus").innerHTML='<span class="text-green-500 text-[10px]">Live</span>';
+      const raw = await r.json();
+      if(Array.isArray(raw)){staticData=raw;}
+      else{staticData=raw.predictions||[];window._perf=raw.performance||{};}
+      if(staticData.length>0){
+        weekData = staticData.map(d=>({date:d.date,display:d.display,weekLabel:"",courses:d.courses.map(c=>c.name)}));
+        document.getElementById("apiStatus").textContent="";
         const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
         const future=weekData.filter(d=>d.date>=today);
         activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
@@ -99,18 +102,19 @@ async function init(){
     }
   }catch(e){}
 
-  // Fallback: static JSON (docs/data/predictions.json)
+  // FALLBACK: API (only when static JSON unavailable)
   try{
-    const base = window.location.href.replace(/\/[^/]*$/,'');
-    const r = await fetch(`${base}/docs/data/predictions.json?_t=${Date.now()}`);
+    const r=await fetch(`${API}/race-dates?weeks=3`,{signal:AbortSignal.timeout(5000)});
     if(r.ok){
-      staticData = await r.json();
-      weekData = staticData.map(d=>({date:d.date,display:d.display,weekLabel:"",courses:d.courses.map(c=>c.name)}));
-      document.getElementById("apiStatus").innerHTML='<span class="text-amber-500 text-[10px]">Offline (静的データ)</span>';
-      const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
-      const future=weekData.filter(d=>d.date>=today);
-      activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
-      renderDateTabs();loadAndRenderDay(activeDate);return;
+      const d=await r.json();
+      if(d&&d.length>0){
+        weekData=d;
+        document.getElementById("apiStatus").innerHTML='<span class="text-amber-500 text-[10px]">API (非エクスポートデータ)</span>';
+        const today=new Date().toISOString().slice(0,10).replace(/-/g,'');
+        const future=weekData.filter(d=>d.date>=today);
+        activeDate=future.length?future[0].date:weekData[weekData.length-1].date;
+        renderDateTabs();loadAndRenderDay(activeDate);return;
+      }
     }
   }catch(e){}
 
