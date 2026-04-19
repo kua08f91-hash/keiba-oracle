@@ -149,7 +149,12 @@ async function loadAndRenderDay(ds){
   if(staticData){
     const dayData=staticData.find(d=>d.date===ds);
     if(dayData){
-      const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>({raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,raceInfo:r.raceInfo||{},startTime:r.raceInfo?.startTime||""}))}));
+      const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>{
+        let confidence='';
+        const preds=(r.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+        if(preds.length>=2){const gap=preds[0].score-preds[1].score;if(gap>=10)confidence='high';else if(gap>=5)confidence='mid';}
+        return{raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,raceInfo:r.raceInfo||{},startTime:r.raceInfo?.startTime||"",confidence};
+      })}));
       scheduleCache[ds]=sc;renderDay(sc,ds);return;
     }
   }
@@ -258,15 +263,17 @@ function renderDay(schedules,ds){
             <span class="text-gray-500 text-[10px] ml-auto">${sc.races.length}R</span>
           </div>
           <div class="divide-y divide-gray-100">
-            ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);return`
+            ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);
+              const conf=r.confidence==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':r.confidence==='mid'?'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>':'';
+              return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
-                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g||conf?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
                   ${r.raceNumber}R
                 </div>
                 <div class="flex-1 min-w-0 ml-2.5">
                   <div class="flex items-start gap-1.5 flex-wrap">
                     <span class="font-bold text-[13px] sm:text-[12px] leading-tight ${sp?'text-navy-900':'text-gray-600'} group-hover:text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
-                    ${g}
+                    ${g}${conf?' '+conf:''}
                   </div>
                   <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
                 </div>
@@ -404,7 +411,8 @@ function renderTable(){
   h+=`<td class="py-1.5 text-center">${mark?`<div class="flex flex-col items-center leading-none"><span class="${ms.t} font-black text-lg leading-none">${mark}</span><span class="text-[8px] text-gray-400 mt-0.5">${ms.l}</span></div>`:'<span class="text-gray-200">-</span>'}</td>`;
   h+=`<td class="py-1.5 text-center border-r border-gray-50 hidden md:table-cell"><span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black" style="background:${fc.bg};color:${fc.text};border:2px solid ${fc.border}">${entry.frameNumber}</span></td>`;
   h+=`<td class="py-1.5 text-center font-black text-sm text-gray-800 border-r border-gray-50">${entry.horseNumber}</td>`;
-  h+=`<td class="py-1.5 px-2 border-r border-gray-50 ${entry.isScratched?'line-through text-gray-400':''}"><span class="font-bold text-[12px] text-gray-900">${entry.horseName}</span></td>`;
+  const mobileInfo=entry.isScratched?'':`<div class="sm:hidden text-[9px] text-gray-400 mt-0.5 leading-tight">${entry.jockeyName||''} ${entry.age||''} ${entry.weightCarried?entry.weightCarried.toFixed(1)+'kg':''} ${entry.odds!=null?entry.odds.toFixed(1)+'倍':''} ${entry.popularity!=null?entry.popularity+'人気':''}</div>`;
+  h+=`<td class="py-1.5 px-2 border-r border-gray-50 ${entry.isScratched?'line-through text-gray-400':''}"><span class="font-bold text-[12px] text-gray-900">${entry.horseName}</span>${mobileInfo}</td>`;
   h+=`<td class="py-1.5 text-center text-[11px] text-gray-500 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':entry.age||''}</td>`;
   h+=`<td class="py-1.5 text-center text-[11px] text-gray-600 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':(entry.weightCarried?entry.weightCarried.toFixed(1):'')}</td>`;
   h+=`<td class="py-1.5 px-2 text-[12px] font-bold text-gray-700 border-r border-gray-50 hidden sm:table-cell">${entry.isScratched?'—':entry.jockeyName||''}</td>`;

@@ -443,7 +443,8 @@ function renderTable(){
   h+=`<td class="py-1.5 text-center">${mark?`<div class="flex flex-col items-center leading-none"><span class="${ms.t} font-black text-lg leading-none">${mark}</span><span class="text-[8px] text-gray-400 mt-0.5">${ms.l}</span></div>`:'<span class="text-gray-200">-</span>'}</td>`;
   h+=`<td class="py-1.5 text-center border-r border-gray-50 hidden md:table-cell"><span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black" style="background:${fc.bg};color:${fc.text};border:2px solid ${fc.border}">${entry.frameNumber}</span></td>`;
   h+=`<td class="py-1.5 text-center font-black text-sm text-gray-800 border-r border-gray-50">${entry.horseNumber}</td>`;
-  h+=`<td class="py-1.5 px-2 border-r border-gray-50 ${entry.isScratched?'line-through text-gray-400':''}"><span class="font-bold text-[12px] text-gray-900">${entry.horseName}</span></td>`;
+  const mobileInfo=entry.isScratched?'':`<div class="sm:hidden text-[9px] text-gray-400 mt-0.5 leading-tight">${entry.jockeyName||''} ${entry.age||''} ${entry.weightCarried?entry.weightCarried.toFixed(1)+'kg':''} ${entry.odds!=null?entry.odds.toFixed(1)+'倍':''} ${entry.popularity!=null?entry.popularity+'人気':''}</div>`;
+  h+=`<td class="py-1.5 px-2 border-r border-gray-50 ${entry.isScratched?'line-through text-gray-400':''}"><span class="font-bold text-[12px] text-gray-900">${entry.horseName}</span>${mobileInfo}</td>`;
   h+=`<td class="py-1.5 text-center text-[11px] text-gray-500 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':entry.age||''}</td>`;
   h+=`<td class="py-1.5 text-center text-[11px] text-gray-600 border-r border-gray-50 hidden md:table-cell">${entry.isScratched?'—':(entry.weightCarried?entry.weightCarried.toFixed(1):'')}</td>`;
   h+=`<td class="py-1.5 px-2 text-[12px] font-bold text-gray-700 border-r border-gray-50 hidden sm:table-cell">${entry.isScratched?'—':entry.jockeyName||''}</td>`;
