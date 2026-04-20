@@ -267,7 +267,7 @@ function renderDay(schedules,ds){
               const conf=r.confidence==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':r.confidence==='mid'?'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>':'';
               return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
-                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g||conf?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':conf?'bg-amber-50 text-amber-700 border border-amber-300':'bg-gray-100 text-navy-800'}">
                   ${r.raceNumber}R
                 </div>
                 <div class="flex-1 min-w-0 ml-2.5">
