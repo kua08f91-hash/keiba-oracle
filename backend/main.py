@@ -41,6 +41,9 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", "http://localhost:8080", "null",
         "https://kua08f91-hash.github.io",  # GitHub Pages
+        "https://keiba-oracle.vercel.app",   # Vercel frontend
+        "https://*.vercel.app",              # Vercel preview deployments
+        "https://*.up.railway.app",          # Railway
     ],
     allow_methods=["*"],
     allow_headers=["*"],

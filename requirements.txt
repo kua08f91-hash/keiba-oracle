@@ -1,0 +1,3 @@
+# Root-level requirements for Railway/cloud deployment
+# References backend/requirements.txt
+-r backend/requirements.txt
