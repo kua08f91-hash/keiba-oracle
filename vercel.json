@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://keiba-oracle-api.up.railway.app/api/:path*"
+      "destination": "https://keiba-oracle-api-production.up.railway.app/api/:path*"
     }
   ],
   "headers": [

@@ -78,7 +78,7 @@
 // 3. GitHub Pages → Railway direct → fallback to static JSON
 const _isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 const _isVercel = window.location.hostname.includes("vercel.app");
-const _CLOUD_API = "https://keiba-oracle-api.up.railway.app/api";
+const _CLOUD_API = "https://keiba-oracle-api-production.up.railway.app/api";
 const API = _isLocal ? "http://localhost:8000/api" : _isVercel ? "/api" : _CLOUD_API;
 let weekData=[], activeDate="", scheduleCache={};
 
