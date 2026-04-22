@@ -187,7 +187,10 @@ def main():
     # Collect last week's performance stats
     perf = _load_performance_stats()
 
-    # Save
+    # Save with export timestamp for stale detection
+    from datetime import datetime
+    perf["exportedAt"] = datetime.now().isoformat()
+
     output = {
         "predictions": all_dates_data,
         "performance": perf,

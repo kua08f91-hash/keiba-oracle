@@ -178,7 +178,11 @@ async function loadAndRenderDay(ds){
   // Try static data first
   if(staticData){
     const dayData=staticData.find(d=>d.date===ds);
-    if(dayData){
+    // Skip stale static data (>15min old) when API is available
+    const STALE_MS=15*60*1000;
+    const exportedAt=window._perf?.exportedAt?new Date(window._perf.exportedAt).getTime():0;
+    const isStale=exportedAt>0&&(Date.now()-exportedAt)>STALE_MS;
+    if(dayData&&(!isStale||!API)){
       // IMPORTANT: preserve raceInfo so gradeTag() can read raceInfo.grade
       const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>{
         // Calculate confidence from score gap between ◎ and ◯

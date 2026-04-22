@@ -213,7 +213,7 @@ def main():
                 continue
 
             # Check if race starts within refresh window
-            if not (window_start <= start_dt <= window_end):
+            if not (wide_start <= start_dt <= wide_end):
                 continue
 
             mins_to_start = int((start_dt - now).total_seconds() / 60)

@@ -21,6 +21,7 @@ import random
 import sys
 import time
 from datetime import datetime, timedelta
+from backend._tz import now_jst, now_utc
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -58,7 +59,7 @@ class RealtimeWorker:
     def __init__(self):
         init_db()
         self.predictor = MLScoringModel()
-        self.today = datetime.now().strftime("%Y%m%d")
+        self.today = now_jst().strftime("%Y%m%d")
         self._start_time_cache = {}  # race_id → "HH:MM" (static per day)
 
     # ─── Step 1: Data Import ───
@@ -81,10 +82,14 @@ class RealtimeWorker:
         except Exception:
             return {}
 
-    def fetch_combination_odds(self, race_id: str) -> dict:
-        """Fetch types 4,5,7,8 (馬連/ワイド/3連複/3連単) from netkeiba API."""
+    def fetch_combination_odds(self, race_id: str):
+        """Fetch types 4,5,7,8 (馬連/ワイド/3連複/3連単) from netkeiba API.
+
+        Returns dict on success, None on majority failure (preserves existing DB data).
+        """
         TYPE_MAP = {4: "umaren", 5: "wide", 7: "sanrenpuku", 8: "sanrentan"}
         result = {}
+        failures = 0
         for api_type, bet_type in TYPE_MAP.items():
             try:
                 url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type={api_type}&action=init"
@@ -113,13 +118,17 @@ class RealtimeWorker:
                         entries.append({"horses": nums, "odds": odds_val, "payout": int(odds_val * 100)})
                 if entries:
                     result[bet_type] = entries
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("fetch_combination_odds type=%d failed: %s", api_type, e)
+                failures += 1
+        # Majority failure → return None to preserve existing DB data
+        if failures > len(TYPE_MAP) // 2:
+            return None
         return result
 
     def save_odds_to_db(self, race_id: str, win_odds: dict, combo_odds: dict):
         """Save odds snapshot to DB."""
-        now = datetime.utcnow()
+        now = now_utc()
         db = get_session()
         try:
             # Win odds snapshots
@@ -135,8 +144,12 @@ class RealtimeWorker:
                     he.odds = win_odds[he.horse_number]["odds"]
                     he.popularity = win_odds[he.horse_number]["popularity"]
 
-            # Combination odds (replace old, keep latest)
-            db.query(CombinationOdds).filter(CombinationOdds.race_id == race_id).delete()
+            # Combination odds: only replace if new data was fetched successfully
+            if combo_odds is None:
+                logger.warning("Skipping CombinationOdds update for %s (fetch failed)", race_id)
+                combo_odds = {}
+            if combo_odds:
+                db.query(CombinationOdds).filter(CombinationOdds.race_id == race_id).delete()
             for bet_type, entries in combo_odds.items():
                 for e in entries:
                     key = "-".join(f"{h:02d}" for h in e["horses"])
@@ -219,7 +232,7 @@ class RealtimeWorker:
             longshot = pick_longshot(cands, bets, probs)
 
         # Save to DB
-        now = datetime.utcnow()
+        now = now_utc()
         db = get_session()
         try:
             cache = db.query(PredictionsCache).filter(PredictionsCache.race_id == race_id).first()
@@ -314,7 +327,7 @@ class RealtimeWorker:
             return 999
         try:
             h, m = st.split(":")
-            now = datetime.now()
+            now = now_jst()
             start = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
             return (start - now).total_seconds() / 60
         except Exception:
@@ -337,7 +350,7 @@ class RealtimeWorker:
         logger.info("=" * 50)
 
         # Check if race day
-        now = datetime.now()
+        now = now_jst()
         if now.weekday() not in (5, 6):  # Sat=5, Sun=6
             logger.info("Not a race day. Exiting.")
             return

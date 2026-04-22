@@ -10,6 +10,7 @@ import logging
 import sys
 import os
 from datetime import datetime, timedelta
+from backend._tz import now_jst
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +307,7 @@ def get_race_dates(weeks: int = 3):
 
     Returns list of {date, dayOfWeek, label} for dates that have races.
     """
-    today = datetime.now()
+    today = now_jst()
     start_date = today - timedelta(days=7)  # Include last week
     end_date = today + timedelta(weeks=weeks)
     race_dates = []
@@ -426,7 +427,7 @@ def get_odds_history(race_id: str):
 def get_race_status(date: str = ""):
     """Get race statuses for a date (default: today)."""
     if not date:
-        date = datetime.now().strftime("%Y%m%d")
+        date = now_jst().strftime("%Y%m%d")
 
     db = get_session()
     try:
