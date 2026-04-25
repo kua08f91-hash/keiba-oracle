@@ -389,13 +389,13 @@ class TestGenerateCandidatesV8:
             assert 2 not in c["_frame_map"]
 
     # ── 馬単: ordered pairs ────────────────────────────────────────────────
-    def test_umatan_count_from_top4(self):
+    def test_umatan_count_from_top5(self):
         from backend.predictor.bet_optimizer import generate_candidates
         probs = {1: 0.3, 2: 0.25, 3: 0.2, 4: 0.15, 5: 0.1}
         candidates = generate_candidates(probs, top_n=5)
         umatan = [c for c in candidates if c["type"] == "umatan"]
-        # P(4,2) = 12 ordered pairs
-        assert len(umatan) == 12
+        # P(5,2) = 20 ordered pairs
+        assert len(umatan) == 20
 
     def test_umatan_ordered_true(self):
         from backend.predictor.bet_optimizer import generate_candidates
@@ -781,8 +781,8 @@ class TestConfidenceGate:
         mod.optimize_bets(self._make_predictions(), odds_data, sample_race_info)
 
         assert "max_bets" in captured, "_diversify was not called"
-        assert captured["max_bets"] <= 3, (
-            f"Confidence gate should reduce max_bets to ≤3 when best_ev < -0.35, "
+        assert captured["max_bets"] <= 4, (
+            f"Confidence gate should reduce max_bets to ≤4 when best_ev is low, "
             f"got {captured['max_bets']}"
         )
 

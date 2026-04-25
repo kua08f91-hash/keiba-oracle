@@ -218,36 +218,36 @@ def generate_candidates(
                         "_frame_map": frame_map,
                     })
 
-    # ── 馬連: top 4 pairs ──
-    for h1, h2 in combinations(top_horses[:4], 2):
+    # ── 馬連: top 6 pairs (was top 4 — expanded for 2-3着 coverage) ──
+    for h1, h2 in combinations(top_horses[:6], 2):
         candidates.append({
             "type": "umaren", "typeLabel": "馬連",
             "horses": sorted([h1, h2]), "ordered": False,
         })
 
-    # ── 馬単: top 4 ordered pairs ──
-    for h1, h2 in permutations(top_horses[:4], 2):
+    # ── 馬単: top 5 ordered pairs (was top 4) ──
+    for h1, h2 in permutations(top_horses[:5], 2):
         candidates.append({
             "type": "umatan", "typeLabel": "馬単",
             "horses": [h1, h2], "ordered": True,
         })
 
-    # ── ワイド: top 5 pairs ──
-    for h1, h2 in combinations(top_horses[:5], 2):
+    # ── ワイド: top 6 pairs (was top 5) ──
+    for h1, h2 in combinations(top_horses[:6], 2):
         candidates.append({
             "type": "wide", "typeLabel": "ワイド",
             "horses": sorted([h1, h2]), "ordered": False,
         })
 
-    # ── 3連複: top 4 triples ──
-    for h1, h2, h3 in combinations(top_horses[:4], 3):
+    # ── 3連複: top 6 triples (was top 4 — 的中可能性3倍) ──
+    for h1, h2, h3 in combinations(top_horses[:6], 3):
         candidates.append({
             "type": "sanrenpuku", "typeLabel": "3連複",
             "horses": sorted([h1, h2, h3]), "ordered": False,
         })
 
-    # ── 3連単: top 4 permutations ──
-    for perm in permutations(top_horses[:4], 3):
+    # ── 3連単: top 5 permutations (was top 4 — 的中可能性1.5倍) ──
+    for perm in permutations(top_horses[:5], 3):
         candidates.append({
             "type": "sanrentan", "typeLabel": "3連単",
             "horses": list(perm), "ordered": True,
@@ -337,7 +337,7 @@ def optimize_bets(
         probs = scores_to_probabilities(predictions, head_count, temp_adjust=temp_multiplier)
 
     # Generate candidates from ALL 8 types
-    candidates = generate_candidates(probs, top_n=min(5, len(probs)), entries=entries)
+    candidates = generate_candidates(probs, top_n=min(7, len(probs)), entries=entries)
 
     # Monte Carlo simulation
     rng = random.Random(42)
