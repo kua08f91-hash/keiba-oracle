@@ -148,7 +148,7 @@ async function loadAndRenderDay(ds){
   // Try static data first (works even when API is rate-limited)
   if(staticData){
     const dayData=staticData.find(d=>d.date===ds);
-    const STALE_MS=15*60*1000;
+    const STALE_MS=6*60*60*1000;
     const exportedAt=window._perf?.exportedAt?new Date(window._perf.exportedAt).getTime():0;
     const isStale=exportedAt>0&&(Date.now()-exportedAt)>STALE_MS;
     if(dayData&&(!isStale||!API)){
