@@ -156,12 +156,12 @@ def _parse_race_info(soup: BeautifulSoup) -> dict:
     race_name_el = soup.select_one(".RaceName")
     if race_name_el:
         info["raceName"] = race_name_el.get_text(strip=True)
-        # Grade detection: Icon_GradeType1 is reliable for GI only.
-        # GII/GIII icons (Type2/3) are also used for Listed/Open races on netkeiba,
-        # so we cross-validate with known graded race names to avoid false positives.
+        # Grade detection: ALL icon types require cross-validation with known names.
+        # netkeiba uses Icon_GradeType1/2/3 for non-graded races too (Listed, Open, etc.)
         name = info["raceName"]
         if race_name_el.select_one(".Icon_GradeType1, .Icon_GradeType15, .Icon_GradeType12"):
-            info["grade"] = "GI"
+            if _is_known_graded(name, "GI"):
+                info["grade"] = "GI"
         elif race_name_el.select_one(".Icon_GradeType2, .Icon_GradeType16, .Icon_GradeType13"):
             # Cross-validate: only set GII if name matches known GII races
             if _is_known_graded(name, "GII"):

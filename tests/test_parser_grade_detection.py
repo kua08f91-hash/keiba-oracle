@@ -88,9 +88,9 @@ class TestJumpsRaceIconDetection:
         assert parse_grade("阪神ジャンプS", "Icon_GradeType14") == "GIII"
 
     # Icon takes priority regardless of name content
-    def test_icon12_on_non_jumps_name_still_gi(self):
-        """Icon class wins even if the race name isn't a known jumps race."""
-        assert parse_grade("特別レース", "Icon_GradeType12") == "GI"
+    def test_icon12_on_unknown_name_no_grade(self):
+        """GI icons also require cross-validation (netkeiba uses them for Open races too)."""
+        assert parse_grade("特別レース", "Icon_GradeType12") is None
 
     def test_icon13_on_unknown_name_no_grade(self):
         """GII/GIII icons on unknown names are rejected (cross-validation)."""
@@ -177,9 +177,9 @@ class TestNameBasedFallback:
 class TestIconPriorityOverNameFallback:
     """Icons must win when both icon and name-based signals are present."""
 
-    def test_gi_icon_on_gii_jumps_name_returns_gi(self):
-        """GI icon on a race whose name would give GII via fallback."""
-        assert parse_grade("東京ハイジャンプ", "Icon_GradeType1") == "GI"
+    def test_gi_icon_on_gii_name_cross_validates(self):
+        """GI icon on GII-named race → name is GII not GI, so falls back to GII."""
+        assert parse_grade("東京ハイジャンプ", "Icon_GradeType1") == "GII"
 
     def test_gii_icon_on_gi_jumps_name_cross_validates(self):
         """GII icon on GI-named race → cross-validation: name is GI, not GII, so falls back to name."""
@@ -190,9 +190,9 @@ class TestIconPriorityOverNameFallback:
         """GIII icon on GI-named race → name fallback gives GI."""
         assert parse_grade("中山大障害", "Icon_GradeType3") == "GI"
 
-    def test_jumps_gi_icon_overrides_name_gii_signal(self):
-        """Icon_GradeType15 (jumps GI) on a GII-named race → GI (GI icon always trusted)."""
-        assert parse_grade("阪神スプリングジャンプ", "Icon_GradeType15") == "GI"
+    def test_jumps_gi_icon_on_gii_name_cross_validates(self):
+        """GI icon on GII-named race → cross-validation gives GII."""
+        assert parse_grade("阪神スプリングジャンプ", "Icon_GradeType15") == "GII"
 
     def test_jumps_gii_icon_on_giii_name_cross_validates(self):
         """GII icon on GIII-named race → cross-validation against GII list fails, name fallback gives GIII."""
@@ -241,8 +241,8 @@ class TestEdgeCases:
         result = parse_race_card(html)
         assert "大阪杯" in result["race_info"]["raceName"]
 
-    def test_multiple_icon_classes_first_wins(self):
-        """If a single span has both GI and GII classes, CSS selector order decides."""
+    def test_multiple_icon_classes_unknown_name_none(self):
+        """Unknown name with GI+GII icons → cross-validation fails, grade is None."""
         html = """
         <html><body>
           <div class="RaceName">
@@ -252,8 +252,7 @@ class TestEdgeCases:
         </body></html>
         """
         result = parse_race_card(html)
-        # The GI check runs first; result must be GI (not GII)
-        assert result["race_info"]["grade"] == "GI"
+        assert result["race_info"]["grade"] is None
 
     def test_unicode_race_name_does_not_crash(self):
         """Emoji and unusual Unicode in race names must not raise."""
@@ -289,10 +288,11 @@ class TestEdgeCases:
         for kw in keywords:
             assert parse_grade(kw) == "GI", f"Expected GI for name '{kw}'"
 
-    def test_all_new_jumps_icon_classes_gi(self):
-        """GI icons are always trusted (no cross-validation needed)."""
+    def test_all_new_jumps_icon_classes_gi_with_known_name(self):
+        """GI icons require cross-validation with known GI names."""
         for cls in ("Icon_GradeType15", "Icon_GradeType12"):
-            assert parse_grade("障害テスト", cls) == "GI", f"Failed for {cls}"
+            assert parse_grade("中山グランドジャンプ", cls) == "GI", f"Failed for {cls}"
+            assert parse_grade("障害テスト", cls) is None  # Unknown name → rejected
 
     def test_all_new_jumps_icon_classes_gii_with_known_name(self):
         """GII icons require cross-validation with known race name."""
