@@ -840,3 +840,245 @@ class TestDbSessionAlwaysClosed:
             fetch_race_card(race_id)
 
         mock_db.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Test: headCount set after scrape (regression for headCount=0 bug)
+#
+# Bug: parse_race_card() initialises headCount to 0 and never updates it.
+# Fix: netkeiba.py sets data["race_info"]["headCount"] = len(data["entries"])
+#      immediately after a successful scrape — before caching or returning.
+#
+# Covered behaviours:
+#  1. headCount equals len(entries) after a live scrape
+#  2. headCount matches len(entries) for any field size (parametrised)
+#  3. headCount > 0 regression guard — the value is never left at parser default
+#  4. DB cache path returns headCount from race.head_count (already correct)
+#  5. parse_race_card() alone still returns headCount=0 (parser default unchanged)
+# ---------------------------------------------------------------------------
+
+class TestHeadCountSetAfterScrape:
+    """Regression tests for the headCount=0 bug.
+
+    Root cause: parse_race_card() sets headCount=0 as a default and does not
+    derive it from the entry list.  The fix lives in netkeiba.fetch_race_card()
+    which writes len(data["entries"]) into race_info after a successful scrape.
+    """
+
+    # ------------------------------------------------------------------
+    # Shared helper: wire up all mocks for a fresh scrape scenario
+    # ------------------------------------------------------------------
+
+    def _scrape_result(self, race_id: str, num_entries: int) -> dict:
+        """Return a _scraped_data dict with headCount=0 (parser default)."""
+        data = _scraped_data(race_id, num_entries)
+        # Simulate what parse_race_card() actually returns: headCount defaults to 0
+        data["race_info"]["headCount"] = 0
+        return data
+
+    def _run_scrape(self, race_id: str, num_entries: int) -> dict:
+        """Execute fetch_race_card() with all external I/O mocked.
+
+        The DB has no cached entry for race_id, so the scrape path is taken.
+        Returns the dict that fetch_race_card() returns.
+        """
+        scraped = self._scrape_result(race_id, num_entries)
+
+        mock_db = MagicMock()
+        # No cached race — force the scrape path
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        mock_http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = "<html></html>"
+        mock_resp.apparent_encoding = "UTF-8"
+        mock_http.get.return_value = mock_resp
+
+        with patch(_GET_SESSION, return_value=mock_db), \
+             patch(_MAKE_SESSION, return_value=mock_http), \
+             patch(_PARSE_RC, return_value=scraped), \
+             patch(_FETCH_PEDIGREE, return_value={}), \
+             patch(_FETCH_RESULT, return_value={}), \
+             patch(_CACHE), \
+             patch(_TIME_SLEEP):
+            from backend.scraper.netkeiba import fetch_race_card
+            return fetch_race_card(race_id)
+
+    # ------------------------------------------------------------------
+    # 1. headCount equals len(entries) after a live scrape
+    # ------------------------------------------------------------------
+
+    def test_headcount_equals_entry_count_after_scrape(self):
+        """After a scrape, race_info['headCount'] must equal the number of entries."""
+        race_id = "202606030190"
+        num_entries = 8
+        result = self._run_scrape(race_id, num_entries)
+
+        assert result is not None
+        assert result["race_info"]["headCount"] == num_entries
+        assert result["race_info"]["headCount"] == len(result["entries"])
+
+    # ------------------------------------------------------------------
+    # 2. headCount matches len(entries) for varying field sizes
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("num_entries", [3, 6, 9, 12, 16, 18])
+    def test_headcount_matches_entries_for_various_field_sizes(self, num_entries: int):
+        """headCount must equal len(entries) regardless of field size."""
+        race_id = f"2026060301{num_entries + 90:02d}"
+        result = self._run_scrape(race_id, num_entries)
+
+        assert result is not None, f"fetch_race_card returned None for {num_entries} entries"
+        assert result["race_info"]["headCount"] == num_entries, (
+            f"headCount {result['race_info']['headCount']} != {num_entries}"
+        )
+        assert result["race_info"]["headCount"] == len(result["entries"]), (
+            "headCount does not match the actual entry list length"
+        )
+
+    # ------------------------------------------------------------------
+    # 3. headCount > 0 regression guard (the core headCount=0 bug)
+    # ------------------------------------------------------------------
+
+    def test_headcount_is_not_zero_when_entries_exist(self):
+        """Regression: headCount must never be 0 when entries are present.
+
+        The original bug left headCount=0 (parser default), causing the
+        bet optimizer's headCount < 3 guard to reject all races.
+        """
+        race_id = "202606030199"
+        num_entries = 10
+        result = self._run_scrape(race_id, num_entries)
+
+        assert result is not None
+        # This assertion would have FAILED before the fix
+        assert result["race_info"]["headCount"] > 0, (
+            "headCount is 0 — the headCount=0 regression has re-appeared"
+        )
+
+    def test_headcount_parser_default_is_zero_before_fix_applied(self):
+        """parse_race_card() alone still returns headCount=0 (parser unchanged).
+
+        This confirms that the fix must live in netkeiba.py, not parser.py.
+        The parser intentionally returns 0; netkeiba.py corrects it post-scrape.
+        """
+        from backend.scraper.parser import parse_race_card
+        # An empty HTML page produces the parser's default output
+        result = parse_race_card("<html><body></body></html>")
+        # The parser either returns None or a dict — if it returns a dict it
+        # must have headCount=0 (the unfixed default we are testing around).
+        if result is not None:
+            assert result["race_info"]["headCount"] == 0, (
+                "parse_race_card now sets headCount itself; "
+                "the netkeiba.py fix may be redundant — verify and update tests."
+            )
+
+    def test_headcount_not_zero_after_cache_invalidation_rescrape(self):
+        """headCount must also be correct when scraping is triggered by cache
+        invalidation (>50% frame=0), not only on a cold-cache miss."""
+        race_id = "202606030200"
+        num_entries = 7
+        scraped = self._scrape_result(race_id, num_entries)
+
+        # Cache exists but has stale frame numbers → triggers re-scrape
+        mock_race = _make_race(race_id)
+        stale_entries = [_make_entry(i, frame_number=0) for i in range(1, num_entries + 1)]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_race
+        mock_db.query.return_value.filter.return_value.all.return_value = stale_entries
+
+        mock_http = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.text = "<html></html>"
+        mock_resp.apparent_encoding = "UTF-8"
+        mock_http.get.return_value = mock_resp
+
+        with patch(_GET_SESSION, return_value=mock_db), \
+             patch(_MAKE_SESSION, return_value=mock_http), \
+             patch(_PARSE_RC, return_value=scraped), \
+             patch(_FETCH_PEDIGREE, return_value={}), \
+             patch(_FETCH_RESULT, return_value={}), \
+             patch(_CACHE), \
+             patch(_TIME_SLEEP):
+            from backend.scraper.netkeiba import fetch_race_card
+            result = fetch_race_card(race_id)
+
+        assert result is not None
+        assert result["race_info"]["headCount"] == num_entries
+        assert result["race_info"]["headCount"] > 0
+
+    # ------------------------------------------------------------------
+    # 4. DB cache path: headCount comes from race.head_count (already correct)
+    # ------------------------------------------------------------------
+
+    def test_cached_path_returns_headcount_from_db(self):
+        """When returning from DB cache, headCount must come from race.head_count."""
+        race_id = "202606030210"
+        db_head_count = 14
+        mock_race = _make_race(race_id)
+        mock_race.head_count = db_head_count
+        entries = [_make_entry(i, frame_number=i) for i in range(1, db_head_count + 1)]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_race
+        mock_db.query.return_value.filter.return_value.all.return_value = entries
+
+        with patch(_GET_SESSION, return_value=mock_db), \
+             patch(_MAKE_SESSION) as mock_session:
+            from backend.scraper.netkeiba import fetch_race_card
+            result = fetch_race_card(race_id)
+
+        assert result is not None
+        # Cache path should not trigger any HTTP request
+        mock_session.assert_not_called()
+        assert result["race_info"]["headCount"] == db_head_count
+
+    def test_cached_path_headcount_is_not_zero(self):
+        """headCount from DB cache must also be > 0 when entries are present."""
+        race_id = "202606030211"
+        mock_race = _make_race(race_id)
+        mock_race.head_count = 6
+        entries = [_make_entry(i, frame_number=i) for i in range(1, 7)]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_race
+        mock_db.query.return_value.filter.return_value.all.return_value = entries
+
+        with patch(_GET_SESSION, return_value=mock_db), \
+             patch(_MAKE_SESSION):
+            from backend.scraper.netkeiba import fetch_race_card
+            result = fetch_race_card(race_id)
+
+        assert result is not None
+        assert result["race_info"]["headCount"] > 0
+
+    # ------------------------------------------------------------------
+    # 5. Minimum field size: headCount >= 3 (bet optimizer guard boundary)
+    # ------------------------------------------------------------------
+
+    def test_headcount_satisfies_bet_optimizer_minimum(self):
+        """The bet optimizer rejects races with headCount < 3.
+        After the fix, even the minimum valid field (3 horses) passes the guard.
+        """
+        race_id = "202606030220"
+        num_entries = 3
+        result = self._run_scrape(race_id, num_entries)
+
+        assert result is not None
+        assert result["race_info"]["headCount"] >= 3, (
+            "headCount is below 3 — the bet optimizer will reject this race"
+        )
+
+    def test_headcount_two_entries_below_optimizer_guard(self):
+        """A 2-horse race is unusual but valid data — headCount should still
+        equal len(entries) even when it falls below the optimizer's threshold.
+        The fix must not clamp or hard-code the value.
+        """
+        race_id = "202606030221"
+        num_entries = 2
+        result = self._run_scrape(race_id, num_entries)
+
+        assert result is not None
+        # headCount must be exactly what was scraped, not 0 and not artificially raised
+        assert result["race_info"]["headCount"] == num_entries
