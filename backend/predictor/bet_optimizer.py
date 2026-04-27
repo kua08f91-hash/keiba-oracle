@@ -437,24 +437,24 @@ def _diversify(candidates: List[Dict], max_bets: int) -> List[Dict]:
     high-hit-rate bet, then fills the rest optimally.
     """
     TYPE_LIMITS = {
-        "wide": 2,         # Best ROI balance (117.3%), double-hit = big win
-        "sanrentan": 1,    # ROI engine (guaranteed 1 slot)
-        "fukusho": 1,      # Hit rate anchor (25.6% hit rate, 98.5% ROI)
-        "tansho": 1,       # Decent hit rate (24.5%)
+        "wide": 3,         # Primary: double-hit=big win, user-preferred
+        "sanrentan": 1,    # ROI engine (strict 1 slot only)
         "umatan": 1,       # Exacta middle ground
         "sanrenpuku": 1,   # Trio unordered
+        "tansho": 1,       # Win bet
+        "fukusho": 1,      # Place bet (not prioritized)
         "umaren": 0,       # BLOCKED: ROI 54% consistently worst
         "wakuren": 1,      # Frame pair
     }
 
-    # EV sort bonuses — balance hit rate and ROI
+    # EV sort bonuses — ワイド重視 + 3連単抑制
     TYPE_BONUS = {
-        "sanrentan": 0.15,  # ROI engine (116.8%)
-        "wide": 0.12,       # Best balanced performer (117.3%)
-        "fukusho": 0.10,    # Hit rate anchor (25.6%, near-breakeven)
+        "wide": 0.18,       # Highest priority (user-preferred, stable ROI)
+        "sanrentan": 0.08,  # Reduced from 0.15 (prevent over-selection)
         "umatan": 0.05,     # Middle ground
-        "tansho": 0.04,     # Hit rate (24.5%)
-        "sanrenpuku": 0.0,
+        "tansho": 0.03,     # Win bet
+        "sanrenpuku": 0.02, # Trio
+        "fukusho": 0.0,     # Not prioritized per user request
         "wakuren": 0.0,
     }
 
@@ -487,9 +487,9 @@ def _diversify(candidates: List[Dict], max_bets: int) -> List[Dict]:
             _pick(bet)
             break
 
-    # Phase 1b: Hit anchor — best ワイド or 複勝
+    # Phase 1b: Hit anchor — best ワイド (user-preferred, stable ROI)
     for bet in viable:
-        if id(bet) not in selected_ids and bet["type"] in ("wide", "fukusho"):
+        if id(bet) not in selected_ids and bet["type"] == "wide":
             _pick(bet)
             break
 

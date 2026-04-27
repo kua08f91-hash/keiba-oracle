@@ -565,17 +565,18 @@ class TestDiversify:
         types = [b["type"] for b in result]
         assert "umaren" not in types, "馬連 must be blocked (TYPE_LIMITS=0)"
 
-    def test_type_limits_max_two_wide(self):
+    def test_type_limits_max_three_wide(self):
         from backend.predictor.bet_optimizer import _diversify
         candidates = [
             self._make_viable_candidate("wide", [1, 2], ev=0.50, odds=4.0),
             self._make_viable_candidate("wide", [1, 3], ev=0.45, odds=5.0),
             self._make_viable_candidate("wide", [2, 3], ev=0.40, odds=6.0),
+            self._make_viable_candidate("wide", [3, 4], ev=0.35, odds=7.0),
             self._make_viable_candidate("sanrentan", [1, 2, 3], ev=0.05, odds=80.0),
         ]
         result = _diversify(candidates, max_bets=5)
         wide_count = sum(1 for b in result if b["type"] == "wide")
-        assert wide_count <= 2, "ワイド TYPE_LIMIT is 2"
+        assert wide_count <= 3, "ワイド TYPE_LIMIT is 3"
 
     def test_type_limits_max_one_tansho(self):
         from backend.predictor.bet_optimizer import _diversify
