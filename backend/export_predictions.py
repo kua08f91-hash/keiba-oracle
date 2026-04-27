@@ -100,6 +100,17 @@ def main():
                 entries = data["entries"]
                 info = data["race_info"]
 
+                # Validate frame numbers — re-fetch if missing
+                non_scratched = [e for e in entries if not e.get("isScratched")]
+                zero_frames = sum(1 for e in non_scratched if e.get("frameNumber", 0) == 0)
+                if non_scratched and zero_frames > len(non_scratched) * 0.5:
+                    print(f"  ⚠ {s['name']}{rnum:2d}R: {zero_frames}/{len(non_scratched)} entries have frame=0, re-fetching...")
+                    data2 = fetch_race_card(rid, force_refresh=True)
+                    if data2 and data2["entries"]:
+                        entries = data2["entries"]
+                        info = data2["race_info"]
+                        data = data2
+
                 # Live odds
                 time.sleep(0.5)
                 live = fetch_live_odds(rid)

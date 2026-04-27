@@ -50,26 +50,39 @@ def fetch_race_list(date_str: str) -> list:
         return []
 
 
-def fetch_race_card(race_id: str) -> Optional[dict]:
+def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]:
     """Fetch race card (出馬表) for a given race ID.
 
     Checks cache first, scrapes if needed.
+    If cached data has incomplete frame numbers (majority = 0), invalidates
+    cache and re-scrapes — this handles early prefetch before JRA assigns枠番.
     Returns {race_info, entries} or None on error.
     """
     # Check cache
-    db = get_session()
-    try:
-        cached_race = db.query(Race).filter(Race.race_id == race_id).first()
-        if cached_race and cached_race.scraped_at:
-            age = datetime.utcnow() - cached_race.scraped_at
-            if age < CACHE_TTL:
-                entries = db.query(HorseEntry).filter(
-                    HorseEntry.race_id == race_id
-                ).all()
-                if entries:
-                    return _format_cached(cached_race, entries)
-    finally:
-        db.close()
+    if not force_refresh:
+        db = get_session()
+        try:
+            cached_race = db.query(Race).filter(Race.race_id == race_id).first()
+            if cached_race and cached_race.scraped_at:
+                age = datetime.utcnow() - cached_race.scraped_at
+                if age < CACHE_TTL:
+                    entries = db.query(HorseEntry).filter(
+                        HorseEntry.race_id == race_id
+                    ).all()
+                    if entries:
+                        # Check if frame numbers are populated
+                        non_scratched = [e for e in entries if not e.is_scratched]
+                        zero_frames = sum(1 for e in non_scratched if e.frame_number == 0)
+                        if non_scratched and zero_frames > len(non_scratched) * 0.5:
+                            # Majority of entries have frame_number=0 — stale cache
+                            logger.info(
+                                "Race %s: %d/%d entries have frame=0, invalidating cache",
+                                race_id, zero_frames, len(non_scratched),
+                            )
+                        else:
+                            return _format_cached(cached_race, entries)
+        finally:
+            db.close()
 
     # Scrape shutuba page
     session = _make_session()
