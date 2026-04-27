@@ -99,6 +99,7 @@ def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]
 
         data["race_info"]["raceId"] = race_id
         data["race_info"]["racecourseCode"] = race_id[4:6] if len(race_id) >= 6 else ""
+        data["race_info"]["headCount"] = len(data["entries"])
 
         # Fetch pedigree and past races from shutuba_past page (single request for all horses)
         pedigree_map = _fetch_pedigree_from_shutuba_past(session, race_id)
