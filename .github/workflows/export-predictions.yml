@@ -1,0 +1,58 @@
+name: Export Predictions
+
+on:
+  schedule:
+    # 土曜 06:00 JST (金曜 21:00 UTC) — 朝イチ予想生成
+    - cron: '0 21 * * 5'
+    # 土曜 11:00 JST (土曜 02:00 UTC) — オッズ反映更新
+    - cron: '0 2 * * 6'
+    # 土曜 14:00 JST (土曜 05:00 UTC) — 午後レース前更新
+    - cron: '0 5 * * 6'
+    # 日曜 06:00 JST (土曜 21:00 UTC) — 朝イチ予想生成
+    - cron: '0 21 * * 6'
+    # 日曜 11:00 JST (日曜 02:00 UTC) — オッズ反映更新
+    - cron: '0 2 * * 0'
+    # 日曜 14:00 JST (日曜 05:00 UTC) — 午後レース前更新
+    - cron: '0 5 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run export
+        run: python -m backend.export_predictions
+        env:
+          PYTHONUNBUFFERED: '1'
+
+      - name: Check for changes
+        id: check
+        run: |
+          if git diff --quiet docs/data/predictions.json 2>/dev/null; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Commit and push
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/predictions.json
+          git commit -m "Auto-update predictions ($(TZ=Asia/Tokyo date '+%m/%d %H:%M') JST)"
+          git push
