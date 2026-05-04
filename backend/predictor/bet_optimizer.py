@@ -1,10 +1,11 @@
-"""Dynamic per-race betting optimizer (v8 — Full 8-type balanced strategy).
+"""Dynamic per-race betting optimizer (v9 — 馬連◎流し + ワイド balanced strategy).
 
 Generates all candidate bets across 8 JRA bet types, estimates hit probability
 via softmax + Monte Carlo simulation, calculates EV, and selects the best
 bets balancing hit rate and ROI.
 
-Strategy: ROI anchor (3連単) + Hit anchor (ワイド/複勝) + EV fill.
+Strategy: 馬連◎流し anchor + ワイド anchor + EV fill.
+Validated on 5/3: 馬連◎流し ROI 98.3%, ワイド ROI 101%.
 """
 from __future__ import annotations
 
@@ -421,40 +422,45 @@ def optimize_bets(
         elif best_ev < -0.20:
             max_bets = min(max_bets, 4)
 
-    return _diversify(candidates, max_bets)
+    return _diversify(candidates, max_bets, probs_ref=probs)
 
 
-def _diversify(candidates: List[Dict], max_bets: int) -> List[Dict]:
+def _diversify(
+    candidates: List[Dict],
+    max_bets: int,
+    probs_ref: Optional[Dict[int, float]] = None,
+) -> List[Dict]:
     """Balanced selection: maximize both hit rate and ROI.
 
     Two-phase selection:
       Phase 1 — Guaranteed anchors:
-        - 1x ROI anchor: best 3連単 (profit engine, ROI 250%)
-        - 1x Hit anchor: best from {ワイド, 複勝} (consistency, 20%+ hit rate)
+        - 1x 馬連◎流し: umaren containing top AI horse (ROI 98.3%)
+        - 1x ワイド◎流し: wide containing top AI horse (ROI 101%)
       Phase 2 — Fill remaining by EV with type diversity limits.
 
     This ensures every race has at least one high-ROI bet and one
     high-hit-rate bet, then fills the rest optimally.
     """
     TYPE_LIMITS = {
-        "wide": 3,         # Primary: double-hit=big win, user-preferred
-        "sanrentan": 1,    # ROI engine (strict 1 slot only)
+        "wide": 2,         # Stable ROI (5/3: 101%), pair with umaren
+        "umaren": 2,       # ◎流し anchor (5/3: ROI 98.3%, 25% hit rate)
+        "sanrentan": 1,    # ROI engine (strict 1 slot)
         "umatan": 1,       # Exacta middle ground
         "sanrenpuku": 1,   # Trio unordered
         "tansho": 1,       # Win bet
-        "fukusho": 1,      # Place bet (not prioritized)
-        "umaren": 0,       # BLOCKED: ROI 54% consistently worst
+        "fukusho": 1,      # Place bet
         "wakuren": 1,      # Frame pair
     }
 
-    # EV sort bonuses — ワイド重視 + 3連単抑制
+    # EV sort bonuses — 馬連◎流し + ワイド重視
     TYPE_BONUS = {
-        "wide": 0.18,       # Highest priority (user-preferred, stable ROI)
-        "sanrentan": 0.08,  # Reduced from 0.15 (prevent over-selection)
-        "umatan": 0.05,     # Middle ground
-        "tansho": 0.03,     # Win bet
-        "sanrenpuku": 0.02, # Trio
-        "fukusho": 0.0,     # Not prioritized per user request
+        "umaren": 0.20,     # Highest: ◎流し anchor (ROI 98.3% validated)
+        "wide": 0.18,       # Secondary: stable hit rate (ROI 101%)
+        "sanrentan": 0.05,  # Reduced: 0/34 on 5/3
+        "umatan": 0.03,     # Reduced: 0/27 on 5/3
+        "tansho": 0.02,     # Win bet
+        "sanrenpuku": 0.01, # Trio
+        "fukusho": 0.0,     # Not prioritized
         "wakuren": 0.0,
     }
 
@@ -481,17 +487,27 @@ def _diversify(candidates: List[Dict], max_bets: int) -> List[Dict]:
         selected_ids.add(id(bet))
         type_counts[bet["type"]] = type_counts.get(bet["type"], 0) + 1
 
-    # Phase 1a: ROI anchor — best 3連単
-    for bet in viable:
-        if bet["type"] == "sanrentan":
-            _pick(bet)
-            break
+    # Phase 1a: 馬連◎流し anchor — best umaren containing ◎ (top-ranked horse)
+    # ◎流し: always pick umaren with the top AI horse included
+    ranked_horses = sorted(probs_ref.items(), key=lambda x: -x[1]) if probs_ref else []
+    top1_horse = ranked_horses[0][0] if ranked_horses else None
+    if top1_horse is not None:
+        honmei_umarens = [c for c in viable if c["type"] == "umaren" and top1_horse in c["horses"]]
+        if honmei_umarens:
+            best = max(honmei_umarens, key=lambda c: c.get("ev", -99))
+            _pick(best)
 
-    # Phase 1b: Hit anchor — best ワイド (user-preferred, stable ROI)
-    for bet in viable:
-        if id(bet) not in selected_ids and bet["type"] == "wide":
-            _pick(bet)
-            break
+    # Phase 1b: ワイド◎流し anchor — best wide containing ◎
+    if top1_horse is not None:
+        honmei_wides = [c for c in viable if c["type"] == "wide" and top1_horse in c["horses"] and id(c) not in selected_ids]
+        if honmei_wides:
+            best_w = max(honmei_wides, key=lambda c: c.get("ev", -99))
+            _pick(best_w)
+    if not any(b["type"] == "wide" for b in selected):
+        for bet in viable:
+            if id(bet) not in selected_ids and bet["type"] == "wide":
+                _pick(bet)
+                break
 
     # Phase 2: Fill remaining by EV with type limits
     for bet in viable:

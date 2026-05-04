@@ -551,9 +551,9 @@ class TestDiversify:
         types = [b["type"] for b in result]
         assert "fukusho" in types
 
-    def test_umaren_blocked_type_limit_zero(self):
+    def test_umaren_included_as_anchor(self):
         from backend.predictor.bet_optimizer import _diversify
-        # umaren has TYPE_LIMITS = 0, so it must never appear in output
+        # umaren has TYPE_LIMITS = 2, used as ◎流し anchor
         candidates = [
             self._make_viable_candidate("umaren", [1, 2], ev=0.80, odds=9.0),
             self._make_viable_candidate("umaren", [1, 3], ev=0.75, odds=12.0),
@@ -563,9 +563,10 @@ class TestDiversify:
         ]
         result = _diversify(candidates, max_bets=5)
         types = [b["type"] for b in result]
-        assert "umaren" not in types, "馬連 must be blocked (TYPE_LIMITS=0)"
+        assert "umaren" in types, "馬連 must be included as anchor"
+        assert types.count("umaren") <= 2, "馬連 max 2 per TYPE_LIMITS"
 
-    def test_type_limits_max_three_wide(self):
+    def test_type_limits_max_two_wide(self):
         from backend.predictor.bet_optimizer import _diversify
         candidates = [
             self._make_viable_candidate("wide", [1, 2], ev=0.50, odds=4.0),
@@ -576,7 +577,7 @@ class TestDiversify:
         ]
         result = _diversify(candidates, max_bets=5)
         wide_count = sum(1 for b in result if b["type"] == "wide")
-        assert wide_count <= 3, "ワイド TYPE_LIMIT is 3"
+        assert wide_count <= 2, "ワイド TYPE_LIMIT is 2"
 
     def test_type_limits_max_one_tansho(self):
         from backend.predictor.bet_optimizer import _diversify
@@ -651,10 +652,9 @@ class TestDiversify:
         result = _diversify(candidates, max_bets=4)
         assert len(result) == 4
 
-    def test_overflow_respects_type_limits_for_blocked_types(self):
-        """Overflow fill must not bypass TYPE_LIMITS (umaren=0 must stay blocked)."""
+    def test_overflow_respects_type_limits_for_umaren(self):
+        """Overflow fill must respect TYPE_LIMITS (umaren max 2)."""
         from backend.predictor.bet_optimizer import _diversify
-        # Pack slots with high-ev umaren; fill should max out WITHOUT umaren
         candidates = [
             self._make_viable_candidate("umaren", [1, 2], ev=0.90, odds=9.0),
             self._make_viable_candidate("umaren", [2, 3], ev=0.85, odds=10.0),
@@ -664,7 +664,7 @@ class TestDiversify:
         ]
         result = _diversify(candidates, max_bets=5)
         types = [b["type"] for b in result]
-        assert "umaren" not in types
+        assert types.count("umaren") <= 2, "umaren must respect TYPE_LIMITS=2"
 
 
 class TestMinOddsByType:
@@ -733,9 +733,9 @@ class TestConfidenceGate:
         captured = {}
         original_diversify = mod._diversify
 
-        def spy_diversify(candidates, max_bets):
+        def spy_diversify(candidates, max_bets, **kwargs):
             captured["max_bets"] = max_bets
-            return original_diversify(candidates, max_bets)
+            return original_diversify(candidates, max_bets, **kwargs)
 
         # With hitProb=0.002 and real odds=2.0 for ALL types:
         # base_ev = 0.002*2 - 1 = -0.996
@@ -795,9 +795,9 @@ class TestConfidenceGate:
         captured = {}
         original_diversify = mod._diversify
 
-        def spy_diversify(candidates, max_bets):
+        def spy_diversify(candidates, max_bets, **kwargs):
             captured["max_bets"] = max_bets
-            return original_diversify(candidates, max_bets)
+            return original_diversify(candidates, max_bets, **kwargs)
 
         perms = [
             [i, j, k]
@@ -838,9 +838,9 @@ class TestConfidenceGate:
         captured = {}
         original_diversify = mod._diversify
 
-        def spy_diversify(candidates, max_bets):
+        def spy_diversify(candidates, max_bets, **kwargs):
             captured["max_bets"] = max_bets
-            return original_diversify(candidates, max_bets)
+            return original_diversify(candidates, max_bets, **kwargs)
 
         monkeypatch.setattr(mod, "_diversify", spy_diversify)
 
