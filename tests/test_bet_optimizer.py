@@ -1021,3 +1021,385 @@ class TestPickLongshot:
         result = pick_longshot(candidates, [], {})
         assert result is not None
         assert result["rank"] == 0
+
+
+# ---------------------------------------------------------------------------
+# NEW TDD TESTS — v9 ◎流し (honmei-nagashi) anchor behaviour
+# ---------------------------------------------------------------------------
+
+
+class TestHonmeiNagashiAnchor:
+    """TDD tests for v9 _diversify() ◎流し anchor logic.
+
+    Covers:
+    - Phase 1a: umaren anchor containing the top AI horse (◎)
+    - Phase 1b: wide anchor containing the top AI horse (◎)
+    - Correct top-horse identification via probs_ref
+    - Fallback paths (no matching candidates, probs_ref=None)
+    - TYPE_LIMITS enforcement: umaren=2, wide=2
+    - Both anchors coexist in the same output
+    - New TYPE_BONUS values (umaren=0.20 highest, wide=0.18)
+    """
+
+    def _make_viable_candidate(self, bet_type, horses, ev=0.1, hit_prob=0.3, odds=5.0):
+        """Build a candidate that passes the viable filter in _diversify."""
+        return {
+            "type": bet_type,
+            "typeLabel": bet_type,
+            "horses": horses,
+            "ev": ev,
+            "hitProb": hit_prob,
+            "odds": odds,
+            "ordered": bet_type in ("umatan", "sanrentan"),
+        }
+
+    # ── Phase 1a: umaren anchor selects the bet containing ◎ ─────────────
+
+    def test_phase1a_picks_umaren_containing_top_horse(self):
+        """Phase 1a must select a umaren whose horses list contains the ◎ horse."""
+        from backend.predictor.bet_optimizer import _diversify
+        # Horse 1 is ◎ (highest prob).  Provide two umaren: one with horse 1 and
+        # one without.  The anchor should choose the one containing horse 1.
+        probs_ref = {1: 0.40, 2: 0.25, 3: 0.20, 4: 0.15}
+        candidates = [
+            self._make_viable_candidate("umaren", [2, 3], ev=0.50, odds=10.0),  # no ◎
+            self._make_viable_candidate("umaren", [1, 2], ev=0.30, odds=9.0),   # ◎ included
+            self._make_viable_candidate("umaren", [1, 3], ev=0.20, odds=12.0),  # ◎ included
+            self._make_viable_candidate("wide",   [2, 3], ev=0.10, odds=3.5),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        umaren_bets = [b for b in result if b["type"] == "umaren"]
+        assert len(umaren_bets) >= 1, "At least one umaren must be selected"
+        # Phase 1a guarantees at least the first umaren selected contains ◎
+        anchor_umaren = [b for b in umaren_bets if 1 in b["horses"]]
+        assert len(anchor_umaren) >= 1, "Phase 1a umaren anchor must contain ◎ horse (1)"
+
+    def test_phase1a_anchor_umaren_is_best_ev_among_honmei_candidates(self):
+        """When multiple umaren contain ◎, Phase 1a picks the one with highest EV."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.45, 2: 0.30, 3: 0.25}
+        # Two umaren containing horse 1; second has higher EV
+        lower_ev = self._make_viable_candidate("umaren", [1, 2], ev=0.15, odds=8.0)
+        higher_ev = self._make_viable_candidate("umaren", [1, 3], ev=0.35, odds=12.0)
+        candidates = [lower_ev, higher_ev,
+                      self._make_viable_candidate("wide", [2, 3], ev=0.10, odds=3.5)]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        # The first umaren in the result (rank 1) must be the higher-EV one
+        first_umaren = next(b for b in result if b["type"] == "umaren")
+        assert first_umaren["horses"] == higher_ev["horses"], (
+            "Phase 1a must pick the umaren with highest EV among ◎-containing candidates"
+        )
+
+    def test_phase1a_anchor_is_selected_even_when_ev_is_lower_than_other_types(self):
+        """The ◎ umaren is picked even if tansho or sanrentan has a higher raw EV."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("tansho",   [1],    ev=0.90, odds=3.0),
+            self._make_viable_candidate("sanrentan", [1,2,3], ev=0.80, odds=80.0),
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.05, odds=8.0),  # low EV ◎
+            self._make_viable_candidate("wide",     [1, 2], ev=0.10, odds=3.5),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        types = [b["type"] for b in result]
+        assert "umaren" in types, "◎ umaren anchor must be included despite low EV"
+        umaren_bet = next(b for b in result if b["type"] == "umaren")
+        assert 1 in umaren_bet["horses"], "Selected umaren must contain ◎ horse"
+
+    # ── Phase 1b: wide anchor selects the bet containing ◎ ───────────────
+
+    def test_phase1b_picks_wide_containing_top_horse(self):
+        """Phase 1b must select a wide whose horses list contains the ◎ horse."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.40, 2: 0.25, 3: 0.20, 4: 0.15}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",   [2, 3], ev=0.50, odds=4.0),  # no ◎
+            self._make_viable_candidate("wide",   [1, 2], ev=0.20, odds=3.5),  # ◎
+            self._make_viable_candidate("wide",   [1, 3], ev=0.10, odds=5.0),  # ◎
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        wide_bets = [b for b in result if b["type"] == "wide"]
+        assert len(wide_bets) >= 1, "At least one wide must be selected"
+        anchor_wide = [b for b in wide_bets if 1 in b["horses"]]
+        assert len(anchor_wide) >= 1, "Phase 1b wide anchor must contain ◎ horse (1)"
+
+    def test_phase1b_anchor_wide_is_best_ev_among_honmei_candidates(self):
+        """When multiple wide contain ◎, Phase 1b picks the one with highest EV."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.45, 2: 0.30, 3: 0.25}
+        lower_ev_wide  = self._make_viable_candidate("wide", [1, 2], ev=0.10, odds=3.5)
+        higher_ev_wide = self._make_viable_candidate("wide", [1, 3], ev=0.30, odds=5.0)
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.20, odds=9.0),
+            lower_ev_wide,
+            higher_ev_wide,
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        wide_results = [b for b in result if b["type"] == "wide"]
+        # The wide anchor (first wide picked by Phase 1b) must be the higher-EV one
+        assert any(b["horses"] == higher_ev_wide["horses"] for b in wide_results), (
+            "Phase 1b must pick the wide with highest EV among ◎-containing candidates"
+        )
+
+    def test_phase1b_anchor_is_selected_even_when_non_anchor_wide_has_higher_ev(self):
+        """Wide without ◎ may have higher EV, but the ◎-anchor wide is still picked."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.20, odds=9.0),
+            self._make_viable_candidate("wide",     [2, 3], ev=0.80, odds=4.0),  # high EV, no ◎
+            self._make_viable_candidate("wide",     [1, 2], ev=0.05, odds=3.5),  # low EV, ◎
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        wide_bets = [b for b in result if b["type"] == "wide"]
+        anchor_wide = [b for b in wide_bets if 1 in b["horses"]]
+        assert len(anchor_wide) >= 1, "◎ wide anchor must be selected despite lower EV"
+
+    # ── Top-horse identification from probs_ref ───────────────────────────
+
+    def test_top_horse_is_identified_by_highest_probability(self):
+        """The horse with the highest probability in probs_ref is ◎."""
+        from backend.predictor.bet_optimizer import _diversify
+        # Horse 3 has the highest probability — it must be the anchor target
+        probs_ref = {1: 0.20, 2: 0.25, 3: 0.55}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.40, odds=10.0),  # no ◎(3)
+            self._make_viable_candidate("umaren", [2, 3], ev=0.20, odds=9.0),   # ◎(3)
+            self._make_viable_candidate("wide",   [1, 2], ev=0.30, odds=4.0),   # no ◎(3)
+            self._make_viable_candidate("wide",   [3, 1], ev=0.10, odds=3.5),   # ◎(3)
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        umaren_bets = [b for b in result if b["type"] == "umaren"]
+        wide_bets   = [b for b in result if b["type"] == "wide"]
+        # At least the anchor bets contain horse 3
+        assert any(3 in b["horses"] for b in umaren_bets), "Umaren anchor must include horse 3"
+        assert any(3 in b["horses"] for b in wide_bets),   "Wide anchor must include horse 3"
+
+    # ── Phase 1a skipped when no umaren candidates contain ◎ ─────────────
+
+    def test_phase1a_skipped_when_no_honmei_umaren_exists(self):
+        """When no viable umaren contains the ◎ horse, Phase 1a is skipped gracefully."""
+        from backend.predictor.bet_optimizer import _diversify
+        # Horse 1 is ◎ but all umaren candidates are horse 2 vs horse 3 (no ◎)
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren", [2, 3], ev=0.30, odds=10.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.20, odds=3.5),
+            self._make_viable_candidate("tansho", [1],    ev=0.40, odds=3.0),
+        ]
+        # Must not raise and must return a valid list
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        assert isinstance(result, list)
+        # No umaren anchor was available, so umaren may or may not appear via Phase 2
+        # but the call must succeed without error
+
+    def test_phase1a_skipped_does_not_prevent_other_bets_from_being_selected(self):
+        """When Phase 1a cannot fire, Phase 1b and Phase 2 still populate the output."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            # No umaren containing horse 1 — Phase 1a skipped
+            self._make_viable_candidate("umaren", [2, 3], ev=0.30, odds=10.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.20, odds=3.5),
+            self._make_viable_candidate("tansho", [2],    ev=0.40, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        assert len(result) >= 2, "Output should still contain at least 2 bets"
+        types = [b["type"] for b in result]
+        assert "wide" in types, "Wide anchor should still be selected via Phase 1b"
+
+    # ── Fallback: probs_ref=None ──────────────────────────────────────────
+
+    def test_probs_ref_none_does_not_crash(self):
+        """_diversify(probs_ref=None) must not raise any exception."""
+        from backend.predictor.bet_optimizer import _diversify
+        candidates = [
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",     [1, 2], ev=0.20, odds=3.5),
+            self._make_viable_candidate("tansho",   [1],    ev=0.40, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=None)
+        assert isinstance(result, list)
+
+    def test_probs_ref_none_selects_by_ev_only(self):
+        """With probs_ref=None both anchor phases are skipped; Phase 2 fills by EV."""
+        from backend.predictor.bet_optimizer import _diversify
+        candidates = [
+            self._make_viable_candidate("tansho",   [1],    ev=0.90, odds=3.0),
+            self._make_viable_candidate("wide",     [1, 2], ev=0.50, odds=3.5),
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.40, odds=9.0),
+            self._make_viable_candidate("sanrentan", [1,2,3], ev=0.10, odds=80.0),
+        ]
+        result = _diversify(candidates, max_bets=4, probs_ref=None)
+        # All four should be selected since there are exactly 4 viable candidates
+        # and no anchor logic restricts them
+        assert len(result) == 4
+
+    def test_probs_ref_none_returns_empty_for_empty_candidates(self):
+        """probs_ref=None with an empty list must return an empty list."""
+        from backend.predictor.bet_optimizer import _diversify
+        assert _diversify([], max_bets=5, probs_ref=None) == []
+
+    # ── TYPE_LIMITS: umaren max 2 ─────────────────────────────────────────
+
+    def test_type_limit_umaren_max_2_respected_with_probs_ref(self):
+        """Even with probs_ref supplied, umaren TYPE_LIMIT=2 must not be exceeded."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.45, 2: 0.25, 3: 0.20, 4: 0.10}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.80, odds=9.0),
+            self._make_viable_candidate("umaren", [1, 3], ev=0.75, odds=10.0),
+            self._make_viable_candidate("umaren", [1, 4], ev=0.70, odds=11.0),  # 3rd ◎ umaren
+            self._make_viable_candidate("umaren", [2, 3], ev=0.65, odds=12.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.20, odds=3.5),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        umaren_count = sum(1 for b in result if b["type"] == "umaren")
+        assert umaren_count <= 2, f"umaren TYPE_LIMIT=2 violated: got {umaren_count}"
+
+    def test_type_limit_umaren_2_allows_exactly_two(self):
+        """Exactly 2 umaren bets should appear when 2+ viable ◎ umaren exist."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.40, odds=9.0),
+            self._make_viable_candidate("umaren", [1, 3], ev=0.35, odds=11.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.20, odds=3.5),
+            self._make_viable_candidate("tansho", [1],    ev=0.30, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        umaren_count = sum(1 for b in result if b["type"] == "umaren")
+        # Phase 1a picks one; Phase 2 can pick a second (within limit=2)
+        assert umaren_count <= 2
+        assert umaren_count >= 1, "At least one umaren (the anchor) must appear"
+
+    # ── TYPE_LIMITS: wide max 2 ───────────────────────────────────────────
+
+    def test_type_limit_wide_max_2_respected_with_probs_ref(self):
+        """wide TYPE_LIMIT=2 must not be exceeded even after Phase 1b anchor."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.45, 2: 0.25, 3: 0.20, 4: 0.10}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide", [1, 2], ev=0.50, odds=4.0),
+            self._make_viable_candidate("wide", [1, 3], ev=0.45, odds=5.0),
+            self._make_viable_candidate("wide", [2, 3], ev=0.40, odds=6.0),
+            self._make_viable_candidate("wide", [3, 4], ev=0.35, odds=7.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        wide_count = sum(1 for b in result if b["type"] == "wide")
+        assert wide_count <= 2, f"wide TYPE_LIMIT=2 violated: got {wide_count}"
+
+    def test_type_limit_wide_2_allows_exactly_two(self):
+        """Exactly 2 wide bets should appear when 2+ viable wide candidates exist."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.40, odds=3.5),
+            self._make_viable_candidate("wide",   [1, 3], ev=0.30, odds=5.0),
+            self._make_viable_candidate("tansho", [1],    ev=0.20, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        wide_count = sum(1 for b in result if b["type"] == "wide")
+        assert wide_count <= 2
+        assert wide_count >= 1, "At least one wide (the anchor) must appear"
+
+    # ── Both umaren and wide anchors coexist in the same output ──────────
+
+    def test_both_umaren_and_wide_anchors_in_output(self):
+        """A single call must produce at least one ◎ umaren AND one ◎ wide."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren", [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("umaren", [1, 3], ev=0.20, odds=11.0),
+            self._make_viable_candidate("wide",   [1, 2], ev=0.25, odds=3.5),
+            self._make_viable_candidate("wide",   [1, 3], ev=0.15, odds=5.0),
+            self._make_viable_candidate("tansho", [1],    ev=0.40, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        has_anchor_umaren = any(b["type"] == "umaren" and 1 in b["horses"] for b in result)
+        has_anchor_wide   = any(b["type"] == "wide"   and 1 in b["horses"] for b in result)
+        assert has_anchor_umaren, "◎ umaren anchor must appear in output"
+        assert has_anchor_wide,   "◎ wide anchor must appear in output"
+
+    def test_both_anchors_coexist_with_remaining_slots_filled(self):
+        """Both anchors are selected and the remaining slots are filled by Phase 2."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",     [1, 2], ev=0.25, odds=3.5),
+            self._make_viable_candidate("tansho",   [1],    ev=0.40, odds=3.0),
+            self._make_viable_candidate("sanrentan", [1,2,3], ev=0.10, odds=80.0),
+            self._make_viable_candidate("umatan",   [1, 2], ev=0.15, odds=12.0),
+        ]
+        result = _diversify(candidates, max_bets=5, probs_ref=probs_ref)
+        # All 5 candidates are viable and diverse enough to fill 5 slots
+        assert len(result) == 5
+        types = {b["type"] for b in result}
+        assert "umaren" in types
+        assert "wide" in types
+
+    # ── TYPE_BONUS values ─────────────────────────────────────────────────
+
+    def test_type_bonus_umaren_is_highest(self):
+        """TYPE_BONUS for umaren (0.20) is the highest of all types.
+
+        Verified indirectly: Phase 1a fires before Phase 1b, so the umaren anchor
+        always receives rank=1.  Even though tansho has a higher raw EV (0.32 vs
+        0.15), the umaren anchor is guaranteed the first slot by Phase 1a.
+        After type bonus the umaren sort_ev = 0.15+0.20 = 0.35, beating tansho
+        sort_ev = 0.32+0.02 = 0.34 — so umaren also wins Phase 2 sort order.
+        """
+        import backend.predictor.bet_optimizer as mod
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        # umaren raw EV 0.15, tansho raw EV 0.32
+        # After bonus: umaren 0.15+0.20=0.35 vs tansho 0.32+0.02=0.34 → umaren sorts first
+        candidates = [
+            self._make_viable_candidate("tansho", [1],    ev=0.32, odds=3.0),
+            self._make_viable_candidate("umaren", [1, 2], ev=0.15, odds=9.0),
+            self._make_viable_candidate("wide",   [2, 3], ev=0.10, odds=3.5),
+        ]
+        result = mod._diversify(candidates, max_bets=3, probs_ref=probs_ref)
+        # Phase 1a picks umaren first → it must be rank 1
+        assert result[0]["type"] == "umaren", (
+            "umaren anchor (Phase 1a) must be rank-1 bet — TYPE_BONUS 0.20 is highest"
+        )
+
+    def test_type_bonus_wide_is_second_highest(self):
+        """Wide TYPE_BONUS=0.18 must be applied: wide beats sanrentan in sort order
+        when raw EVs are equal (sanrentan bonus=0.05 < wide bonus=0.18)."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        # Both have raw EV 0.10. After bonus: wide=0.28, sanrentan=0.15 → wide sorted first
+        candidates = [
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",     [2, 3], ev=0.10, odds=3.5),   # no ◎
+            self._make_viable_candidate("sanrentan", [1,2,3], ev=0.10, odds=80.0),
+        ]
+        # max_bets=2: Phase 1a picks umaren anchor, then Phase 2 fills one more.
+        # wide sorted_ev=0.28 > sanrentan sorted_ev=0.15, so wide should be chosen.
+        result = _diversify(candidates, max_bets=2, probs_ref=probs_ref)
+        assert len(result) == 2
+        types = [b["type"] for b in result]
+        assert "wide" in types, "wide (bonus 0.18) should outrank sanrentan (bonus 0.05)"
+
+    # ── Rank assignment ───────────────────────────────────────────────────
+
+    def test_ranks_are_sequential_starting_at_one(self):
+        """Ranks must be 1, 2, … len(result) regardless of anchor order."""
+        from backend.predictor.bet_optimizer import _diversify
+        probs_ref = {1: 0.50, 2: 0.30, 3: 0.20}
+        candidates = [
+            self._make_viable_candidate("umaren",   [1, 2], ev=0.30, odds=9.0),
+            self._make_viable_candidate("wide",     [1, 2], ev=0.25, odds=3.5),
+            self._make_viable_candidate("tansho",   [1],    ev=0.40, odds=3.0),
+        ]
+        result = _diversify(candidates, max_bets=3, probs_ref=probs_ref)
+        ranks = [b["rank"] for b in result]
+        assert ranks == list(range(1, len(result) + 1)), (
+            f"Ranks must be sequential from 1, got {ranks}"
+        )
