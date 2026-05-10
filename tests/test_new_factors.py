@@ -25,6 +25,9 @@ def _make_td(text: str, classes: list[str] | None = None):
     td.get.side_effect = lambda attr, default=None: (
         classes if attr == "class" else default
     )
+    # select_one returns None (no sub-elements in legacy text-only format)
+    td.select_one.return_value = None
+    td.select.return_value = []
     return td
 
 

@@ -18,6 +18,7 @@ class Race(Base):
     start_time = Column(String, default="")
     racecourse_code = Column(String, nullable=False)
     date = Column(String, nullable=False)
+    track_condition = Column(String, default="")
     head_count = Column(Integer, default=0)
     scraped_at = Column(DateTime, default=datetime.utcnow)
 

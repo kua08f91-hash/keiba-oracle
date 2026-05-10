@@ -321,15 +321,26 @@ def _parse_past_race_td(td) -> Optional[dict]:
     if not text:
         return None
 
-    # Position from Ranking class (most reliable)
-    cls_list = td.get("class", [])
+    # Position: try structured HTML first, then fallback to text regex
     pos = 0
+    # Method 1: Ranking_ class on td
+    cls_list = td.get("class", [])
     for cls in cls_list:
         m = re.match(r"Ranking_(\d+)", cls)
         if m:
             pos = int(m.group(1))
             break
-
+    # Method 2: <span class="Num">7</span> inside Data01
+    if pos == 0:
+        try:
+            num_span = td.select_one(".Data01 .Num, span.Num")
+        except (AttributeError, TypeError):
+            num_span = None
+        if num_span and hasattr(num_span, "get_text"):
+            num_text = num_span.get_text(strip=True)
+            if num_text and num_text.isdigit():
+                pos = int(num_text)
+    # Method 3: "X着" in text
     if pos == 0:
         pos_match = re.search(r"(\d+)着", text)
         if pos_match:
@@ -409,37 +420,48 @@ def _parse_past_race_td(td) -> Optional[dict]:
         except ValueError:
             pass
 
-    # Corners: "14-14-14-" or "3-2-2-" (1-4 numbers separated by hyphens)
-    # They appear at the end of the text, directly after the weight (e.g., "58.5" + "14-14-14-").
-    # To avoid absorbing the last digit(s) of the weight into the first corner number,
-    # we strip the weight prefix from the trailing portion before matching.
+    # Corners: "11-11-12-12" — try structured HTML first (Data06), then text fallback
     corners = []
-    corner_search_text = text
-    if wc_match:
-        # Remove the weight match from the string so the corner regex starts fresh
-        corner_search_text = text[:wc_match.start()] + text[wc_match.end():]
-    corner_match = re.search(r"(\d+(?:-\d+){1,3})-?$", corner_search_text)
-    if corner_match:
-        corner_str = corner_match.group(1)
+    try:
+        data06 = td.select_one(".Data06")
+    except (AttributeError, TypeError):
+        data06 = None
+    if data06:
         try:
-            corners = [int(n) for n in corner_str.split("-") if n]
-        except ValueError:
-            corners = []
+            data06_text = str(data06.get_text(strip=True))
+        except (AttributeError, TypeError):
+            data06_text = ""
+        corner_match = re.match(r"(\d+(?:-\d+){1,3})", data06_text)
+        if corner_match:
+            try:
+                corners = [int(n) for n in corner_match.group(1).split("-") if n]
+            except ValueError:
+                corners = []
+    if not corners:
+        # Fallback: extract from full text (legacy format "58.514-14-14-")
+        corner_search_text = text
+        if wc_match:
+            corner_search_text = text[:wc_match.start()] + text[wc_match.end():]
+        corner_match = re.search(r"(\d+(?:-\d+){1,3})-?$", corner_search_text)
+        if corner_match:
+            try:
+                corners = [int(n) for n in corner_match.group(1).split("-") if n]
+            except ValueError:
+                corners = []
 
     # Derive running style from corners (脚質)
-    # Based on average corner position relative to field size
     running_style = ""
     if corners and field_size > 0:
         avg_corner = sum(corners) / len(corners)
         ratio = avg_corner / field_size
         if ratio <= 0.25:
-            running_style = "逃げ"      # Front-runner
+            running_style = "逃げ"
         elif ratio <= 0.50:
-            running_style = "先行"      # Stalker
+            running_style = "先行"
         elif ratio <= 0.75:
-            running_style = "差し"      # Midpack closer
+            running_style = "差し"
         else:
-            running_style = "追込"      # Deep closer
+            running_style = "追込"
 
     return {
         "pos": pos,
@@ -478,6 +500,7 @@ def _cache_race_card(race_id: str, data: dict):
             start_time=info.get("startTime", ""),
             racecourse_code=info.get("racecourseCode", ""),
             date=info.get("date", ""),
+            track_condition=info.get("trackCondition", ""),
             head_count=len(data["entries"]),
             scraped_at=datetime.utcnow(),
         )
@@ -530,6 +553,7 @@ def _format_cached(race: Race, entries: list) -> dict:
             "startTime": race.start_time,
             "racecourseCode": race.racecourse_code,
             "date": race.date,
+            "trackCondition": getattr(race, "track_condition", "") or "",
             "headCount": race.head_count,
         },
         "entries": [
