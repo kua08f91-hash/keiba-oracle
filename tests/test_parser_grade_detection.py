@@ -304,3 +304,134 @@ class TestEdgeCases:
         for cls in ("Icon_GradeType17", "Icon_GradeType14"):
             assert parse_grade("京都ジャンプS", cls) == "GIII", f"Failed for {cls}"
             assert parse_grade("障害テスト", cls) is None  # Unknown name → rejected
+
+
+# ---------------------------------------------------------------------------
+# Class 6: Date extraction in _parse_race_info() (Change 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_html_with_date(date_text: str, extra_body: str = "") -> str:
+    """Build a minimal page HTML that embeds *date_text* in the body."""
+    return f"""
+    <html><body>
+      <div class="RaceName">テストレース</div>
+      <p>{date_text}</p>
+      {extra_body}
+    </body></html>
+    """
+
+
+def _extract_date(html: str) -> str:
+    """Helper: return race_info['date'] from parse_race_card for the given HTML."""
+    result = parse_race_card(html)
+    return result["race_info"]["date"]
+
+
+class TestDateExtraction:
+    """_parse_race_info() extracts race date from page text.
+
+    The regex r"(\\d{4})年(\\d{1,2})月(\\d{1,2})日" is applied to the full
+    page text.  The extracted date is stored as "YYYYMMDD" (zero-padded).
+    """
+
+    # ------------------------------------------------------------------
+    # Test 1: standard full date → YYYYMMDD
+    # ------------------------------------------------------------------
+
+    def test_full_date_extracted_and_formatted(self):
+        """'2026年5月10日' in the page body → date = '20260510'."""
+        html = _make_html_with_date("2026年5月10日")
+        assert _extract_date(html) == "20260510"
+
+    # ------------------------------------------------------------------
+    # Test 2: single-digit month and day are zero-padded
+    # ------------------------------------------------------------------
+
+    def test_single_digit_month_and_day_zero_padded(self):
+        """'2026年1月3日' → '20260103' (month 1 → 01, day 3 → 03)."""
+        html = _make_html_with_date("2026年1月3日")
+        assert _extract_date(html) == "20260103"
+
+    def test_single_digit_month_two_digit_day(self):
+        """'2025年3月15日' → '20250315'."""
+        html = _make_html_with_date("2025年3月15日")
+        assert _extract_date(html) == "20250315"
+
+    def test_two_digit_month_single_digit_day(self):
+        """'2026年12月5日' → '20261205'."""
+        html = _make_html_with_date("2026年12月5日")
+        assert _extract_date(html) == "20261205"
+
+    def test_two_digit_month_and_day(self):
+        """'2026年11月22日' → '20261122'."""
+        html = _make_html_with_date("2026年11月22日")
+        assert _extract_date(html) == "20261122"
+
+    # ------------------------------------------------------------------
+    # Test 3: no date in page → date = "" (empty string)
+    # ------------------------------------------------------------------
+
+    def test_no_date_in_page_returns_empty_string(self):
+        """When the page contains no Japanese date pattern, date must be ''."""
+        html = "<html><body><div class='RaceName'>テストレース</div></body></html>"
+        assert _extract_date(html) == ""
+
+    def test_partial_date_pattern_not_matched(self):
+        """'2026年5月' (missing 日) must not produce a date."""
+        html = _make_html_with_date("2026年5月")
+        assert _extract_date(html) == ""
+
+    def test_western_date_format_not_matched(self):
+        """'2026/05/10' (slash-separated) must not be matched by the 年月日 regex."""
+        html = _make_html_with_date("2026/05/10")
+        assert _extract_date(html) == ""
+
+    # ------------------------------------------------------------------
+    # Test 4: multiple dates → first match used
+    # ------------------------------------------------------------------
+
+    def test_multiple_dates_first_match_used(self):
+        """When the page contains two dates, the first one (in document order)
+        must be the value stored in race_info['date']."""
+        html = _make_html_with_date(
+            "2026年4月12日",
+            extra_body="<p>次回は2026年4月19日です</p>",
+        )
+        # Both are present; the regex re.search() finds the earliest match.
+        assert _extract_date(html) == "20260412"
+
+    def test_multiple_dates_different_years_first_wins(self):
+        """First date in document order wins, even if a later date has a
+        different year."""
+        html = _make_html_with_date(
+            "2025年12月28日",
+            extra_body="<p>翌年は2026年1月4日</p>",
+        )
+        assert _extract_date(html) == "20251228"
+
+    # ------------------------------------------------------------------
+    # Robustness / edge cases
+    # ------------------------------------------------------------------
+
+    def test_date_in_race_data_section(self):
+        """Date embedded inside a .RaceData01 block (realistic page structure)
+        should still be found because we search soup.get_text()."""
+        html = """
+        <html><body>
+          <div class="RaceName">テストレース</div>
+          <div class="RaceData01">15:45発走 / 芝2000m(右) / 馬場:良</div>
+          <div class="RaceData02">2026年6月7日 東京 11R</div>
+        </body></html>
+        """
+        assert _extract_date(html) == "20260607"
+
+    def test_empty_page_does_not_crash(self):
+        """Completely empty HTML must not raise an exception."""
+        assert _extract_date("") == ""
+
+    def test_date_field_type_is_str(self):
+        """race_info['date'] must always be a str (never None or int)."""
+        html = _make_html_with_date("2026年8月1日")
+        result = parse_race_card(html)
+        assert isinstance(result["race_info"]["date"], str)

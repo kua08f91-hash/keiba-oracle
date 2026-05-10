@@ -1403,3 +1403,280 @@ class TestHonmeiNagashiAnchor:
         assert ranks == list(range(1, len(result) + 1)), (
             f"Ranks must be sequential from 1, got {ranks}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestPopularityExpansion — TDD tests for ◎流し拡張 (Change 1)
+# ---------------------------------------------------------------------------
+
+
+class TestPopularityExpansion:
+    """generate_candidates() should expand umaren/wide with ◎×popular pairs.
+
+    ◎ = top-1 AI horse (ranked first by probability).
+    Expansion adds pairs not already in the base top-6 AI set, using entries
+    whose popularity is 1-5 and who are not scratched.
+    """
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_probs(self, horse_numbers):
+        """Return descending probabilities for an ordered list of horse numbers."""
+        total = len(horse_numbers)
+        return {hn: (total - i) / sum(range(1, total + 1))
+                for i, hn in enumerate(horse_numbers)}
+
+    def _make_entries(self, specs):
+        """Build entries list from (horseNumber, popularity, isScratched) tuples."""
+        entries = []
+        for hn, pop, scratched in specs:
+            entries.append({
+                "horseNumber": hn,
+                "frameNumber": hn,
+                "popularity": pop,
+                "isScratched": scratched,
+            })
+        return entries
+
+    def _umaren_pairs(self, candidates):
+        return [tuple(c["horses"]) for c in candidates if c["type"] == "umaren"]
+
+    def _wide_pairs(self, candidates):
+        return [tuple(c["horses"]) for c in candidates if c["type"] == "wide"]
+
+    # ------------------------------------------------------------------
+    # Test 1: popular horse outside AI top-6 is added to umaren candidates
+    # ------------------------------------------------------------------
+
+    def test_umaren_includes_top1_x_popular_outside_top6(self):
+        """A popular horse (popularity 1-5) that is NOT in AI top-6 should be
+        added as a ◎×popular umaren pair."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        # AI top horses: 1..6 in descending probability
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        # Horse 10 has popularity=3 but is not in AI top-6
+        entries = self._make_entries([
+            (1, 2, False), (2, 3, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+            (10, 3, False),   # outside AI top-6, popularity 3 — should be added
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        # ◎ is horse 1 (top probability). Pair (1, 10) sorted → (1, 10)
+        assert (1, 10) in umaren_pairs, (
+            "Expected ◎(1) × popular(10) pair in umaren candidates"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 2: popular horse already in AI top-6 produces no duplicate
+    # ------------------------------------------------------------------
+
+    def test_umaren_no_duplicate_when_popular_horse_already_in_top6(self):
+        """If a popular horse is already paired with ◎ in the base top-6 set,
+        the expansion must not create a duplicate entry."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        # Horse 2 is in AI top-6 AND has popularity=1
+        entries = self._make_entries([
+            (1, 3, False), (2, 1, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        # The pair (1, 2) should appear exactly once
+        pair = tuple(sorted([1, 2]))
+        count = umaren_pairs.count(pair)
+        assert count == 1, (
+            f"Pair {pair} should appear exactly once in umaren, found {count}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 3: ◎ is not paired with itself
+    # ------------------------------------------------------------------
+
+    def test_umaren_top1_not_paired_with_itself(self):
+        """◎ (top-1 horse) must never appear as a self-pair even when it is
+        also the most popular horse (popularity=1)."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        # Horse 1 is both top AI and popularity=1
+        entries = self._make_entries([
+            (1, 1, False), (2, 2, False), (3, 3, False),
+            (4, 4, False), (5, 5, False), (6, 6, False),
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        for c in candidates:
+            if c["type"] == "umaren":
+                horses = c["horses"]
+                assert horses[0] != horses[1], (
+                    f"Self-pair detected in umaren: {horses}"
+                )
+
+    # ------------------------------------------------------------------
+    # Test 4: entries with no popularity data → only base top-6 pairs
+    # ------------------------------------------------------------------
+
+    def test_umaren_no_expansion_when_no_popularity_data(self):
+        """When entries have no popularity field (or None), the expansion
+        block produces nothing extra — only base AI top-6 pairs."""
+        from backend.predictor.bet_optimizer import generate_candidates
+        from itertools import combinations
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        # Entries without popularity (None)
+        entries = [
+            {"horseNumber": hn, "frameNumber": hn, "popularity": None, "isScratched": False}
+            for hn in range(1, 7)
+        ]
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        expected = [tuple(sorted([h1, h2]))
+                    for h1, h2 in combinations([1, 2, 3, 4, 5, 6], 2)]
+        assert set(umaren_pairs) == set(expected), (
+            "Without popularity data only base top-6 pairs should be generated"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 5: entries=None → no crash, only base pairs generated
+    # ------------------------------------------------------------------
+
+    def test_umaren_no_crash_when_entries_none(self):
+        """Calling generate_candidates with entries=None must not raise and
+        should return only the base AI top-6 umaren pairs."""
+        from backend.predictor.bet_optimizer import generate_candidates
+        from itertools import combinations
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        candidates = generate_candidates(probs, top_n=6, entries=None)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        expected = [tuple(sorted([h1, h2]))
+                    for h1, h2 in combinations([1, 2, 3, 4, 5, 6], 2)]
+        assert set(umaren_pairs) == set(expected)
+
+    # ------------------------------------------------------------------
+    # Test 6: wide candidates also expanded with same ◎流し logic
+    # ------------------------------------------------------------------
+
+    def test_wide_includes_top1_x_popular_outside_top6(self):
+        """Wide bets must also be expanded with ◎×popular pairs for horses
+        outside the AI top-6, mirroring the umaren expansion logic."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 2, False), (2, 3, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+            (11, 1, False),   # outside AI top-6, popularity 1 — must appear in wide
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        wide_pairs = self._wide_pairs(candidates)
+
+        assert (1, 11) in wide_pairs, (
+            "Expected ◎(1) × popular(11) pair in wide candidates"
+        )
+
+    def test_wide_no_duplicate_when_popular_horse_already_in_top6(self):
+        """Wide expansion must not duplicate a pair that exists in the base
+        top-6 wide set."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 3, False), (2, 1, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        wide_pairs = self._wide_pairs(candidates)
+
+        pair = tuple(sorted([1, 2]))
+        count = wide_pairs.count(pair)
+        assert count == 1, (
+            f"Pair {pair} should appear exactly once in wide, found {count}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 7: scratched horses with popularity are excluded
+    # ------------------------------------------------------------------
+
+    def test_umaren_scratched_horse_excluded_even_if_popular(self):
+        """A scratched horse (isScratched=True) must not be added as a
+        ◎×popular pair even if it has popularity <= 5."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 2, False), (2, 3, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+            (7, 1, True),   # popularity=1 but scratched — must NOT appear
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        assert (1, 7) not in umaren_pairs, (
+            "Scratched horse 7 (popularity=1) must not appear in umaren candidates"
+        )
+
+    def test_wide_scratched_horse_excluded_even_if_popular(self):
+        """Same scratched-exclusion guarantee for wide expansion."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 2, False), (2, 3, False), (3, 4, False),
+            (4, 5, False), (5, 6, False), (6, 7, False),
+            (8, 2, True),   # popularity=2 but scratched
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        wide_pairs = self._wide_pairs(candidates)
+
+        assert (1, 8) not in wide_pairs, (
+            "Scratched horse 8 (popularity=2) must not appear in wide candidates"
+        )
+
+    # ------------------------------------------------------------------
+    # Bonus: multiple popular horses outside top-6 are all added
+    # ------------------------------------------------------------------
+
+    def test_umaren_multiple_popular_horses_all_added(self):
+        """All horses with popularity 1-5 that are outside the AI top-6 and
+        not scratched should each produce a ◎×ph pair."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 3, False), (2, 4, False), (3, 5, False),
+            (4, 6, False), (5, 7, False), (6, 8, False),
+            (20, 1, False),   # popularity 1, outside top-6
+            (21, 2, False),   # popularity 2, outside top-6
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        assert (1, 20) in umaren_pairs, "Expected ◎(1)×pop(20) in umaren"
+        assert (1, 21) in umaren_pairs, "Expected ◎(1)×pop(21) in umaren"
+
+    def test_umaren_popularity_boundary_5_included_6_excluded(self):
+        """Horses with popularity exactly 5 are included; popularity 6 is not."""
+        from backend.predictor.bet_optimizer import generate_candidates
+
+        probs = self._make_probs([1, 2, 3, 4, 5, 6])
+        entries = self._make_entries([
+            (1, 3, False), (2, 4, False), (3, 6, False),
+            (4, 7, False), (5, 8, False), (6, 9, False),
+            (30, 5, False),   # boundary: popularity exactly 5 → must be included
+            (31, 6, False),   # popularity 6 → must NOT be included
+        ])
+        candidates = generate_candidates(probs, top_n=6, entries=entries)
+        umaren_pairs = self._umaren_pairs(candidates)
+
+        assert (1, 30) in umaren_pairs, "Horse with popularity=5 must be included"
+        assert (1, 31) not in umaren_pairs, "Horse with popularity=6 must NOT be included"
