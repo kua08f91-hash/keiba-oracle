@@ -697,6 +697,114 @@ class TestParsePastRaceTd:
         }
         assert expected_keys == set(result.keys())
 
+    # --- Fix 1: Method 2 pos extraction from structured HTML ---
+
+    def test_pos_from_data01_num_span(self):
+        """Fix 1: pos extracted from <span class="Num">7</span> inside .Data01."""
+        from bs4 import BeautifulSoup
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">7</span></div>'
+            '<div class="Data06">11-11-12-12 (39.5) 448(-2)</div>'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        # Text is nearly empty — pos must come from the Num span
+        result = self._fn()(td)
+        assert result is not None
+        assert result["pos"] == 7
+
+    def test_pos_zero_when_no_ranking_no_num_no_text(self):
+        """Fix 1: pos=0 when none of the three methods find a position."""
+        from bs4 import BeautifulSoup
+        # No Ranking_ class, no .Num span, no 'X着' text — but has enough
+        # content so the function doesn't return None (needs non-empty text)
+        html = '<td class="Past"><div class="Data01">---</div></td>'
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        # The text "---" is non-empty, so we get a dict back
+        assert result is not None
+        assert result["pos"] == 0
+
+    # --- Fix 2: corners and runningStyle from Data06 div ---
+
+    def test_corners_from_data06_div(self):
+        """Fix 2: corners extracted from Data06 div text '11-11-12-12 (39.5) 448(-2)'."""
+        from bs4 import BeautifulSoup
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">4</span></div>'
+            '<div class="Data06">11-11-12-12 (39.5) 448(-2)</div>'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["corners"] == [11, 11, 12, 12]
+
+    def test_running_style_差し_from_data06(self):
+        """Fix 2: runningStyle=差し when corners=[11,11,12,12] and fieldSize=16."""
+        from bs4 import BeautifulSoup
+        # avg=11.5, ratio=11.5/16=0.719 -> 0.50 < ratio <= 0.75 -> 差し
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">4</span></div>'
+            '<div class="Data06">11-11-12-12 (39.5) 448(-2)</div>'
+            '2026.02.28 阪神10ダ2000 2:04.8良16頭 8番 4人 騎手名'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["corners"] == [11, 11, 12, 12]
+        assert result["runningStyle"] == "差し"
+
+    def test_running_style_逃げ_when_avg_corner_le_25_percent(self):
+        """Fix 2: runningStyle=逃げ when avg corner <= 25% of fieldSize."""
+        from bs4 import BeautifulSoup
+        # corners=[3,4], avg=3.5, fieldSize=16, ratio=3.5/16=0.219 <= 0.25 -> 逃げ
+        html = (
+            '<td class="Past">'
+            '<div class="Data06">3-4 (35.2) 490(0)</div>'
+            '2026.03.01 東京11芝2400 2:23.8良16頭 2番 1人 ルメール'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["corners"] == [3, 4]
+        assert result["runningStyle"] == "逃げ"
+
+    def test_corners_fallback_to_text_regex_when_no_data06(self):
+        """Fix 2: when no Data06 element, corners are extracted by text regex."""
+        # _make_td returns a mock with select_one returning None — no Data06
+        text = "2026.02.28 阪神10ダ2000 2:04.8良16頭 8番 4人 騎手名 58.514-14-14-"
+        result = self._parse(text, [])
+        assert result is not None
+        assert result["corners"] == [14, 14, 14]
+
+    def test_empty_data06_text_returns_empty_corners(self):
+        """Fix 2: Data06 div present but empty -> corners=[]."""
+        from bs4 import BeautifulSoup
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">3</span></div>'
+            '<div class="Data06"></div>'
+            '2026.02.28 阪神10ダ2000 2:04.8良16頭 8番 4人 騎手名'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        # Data06 is empty, no text-regex match either (no weight+corner pattern)
+        assert result["corners"] == []
+
 
 # ===========================================================================
 # 9. optimize_bets — mc_samples parameter
@@ -766,3 +874,136 @@ class TestOptimizeBetsMcSamples:
         # 100 samples is fast enough for a test
         result = optimize_bets(preds, {}, self._make_race_info(), mc_samples=100)
         assert isinstance(result, list)
+
+
+# ===========================================================================
+# 10. TrackCondition — cache pipeline (Fix 3)
+# ===========================================================================
+
+class TestTrackConditionCache:
+    """Verify that trackCondition survives the full cache round-trip:
+    _cache_race_card stores it in Race.track_condition and
+    _format_cached reads it back under the key 'trackCondition'.
+    """
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _make_data(self, track_condition: str = "良") -> dict:
+        """Minimal race-card dict accepted by _cache_race_card."""
+        return {
+            "race_info": {
+                "raceName": "テストレース",
+                "raceNumber": 1,
+                "grade": None,
+                "distance": 1800,
+                "surface": "芝",
+                "courseDetail": "内回り",
+                "startTime": "15:30",
+                "racecourseCode": "05",
+                "date": "2026.04.27",
+                "trackCondition": track_condition,
+            },
+            "entries": [],
+        }
+
+    def _in_memory_db(self):
+        """Return an isolated in-memory SQLite session for the test."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from backend.database.models import Base
+        engine = create_engine("sqlite:///:memory:", echo=False)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        return Session()
+
+    # ------------------------------------------------------------------
+    # Fix 3 tests
+    # ------------------------------------------------------------------
+
+    def test_cache_stores_track_condition(self):
+        """_cache_race_card stores trackCondition in Race.track_condition."""
+        from unittest.mock import patch
+        from backend.database.models import Race
+
+        db = self._in_memory_db()
+        data = self._make_data("稍重")
+        race_id = "202604270501"
+
+        with patch("backend.scraper.netkeiba.get_session", return_value=db):
+            from backend.scraper.netkeiba import _cache_race_card
+            _cache_race_card(race_id, data)
+
+        race = db.query(Race).filter(Race.race_id == race_id).first()
+        assert race is not None
+        assert race.track_condition == "稍重"
+
+    def test_format_cached_returns_track_condition(self):
+        """_format_cached returns trackCondition from Race.track_condition."""
+        from backend.database.models import Race, HorseEntry
+        from backend.scraper.netkeiba import _format_cached
+        from datetime import datetime
+
+        race = Race(
+            race_id="202604270502",
+            race_name="テスト",
+            race_number=2,
+            grade=None,
+            distance=2000,
+            surface="ダ",
+            course_detail="",
+            start_time="10:00",
+            racecourse_code="06",
+            date="2026.04.27",
+            track_condition="重",
+            head_count=0,
+            scraped_at=datetime.utcnow(),
+        )
+        result = _format_cached(race, [])
+        assert result["race_info"]["trackCondition"] == "重"
+
+    def test_track_condition_empty_string_when_not_provided(self):
+        """trackCondition defaults to '' when not provided to _cache_race_card."""
+        from unittest.mock import patch
+        from backend.database.models import Race
+
+        db = self._in_memory_db()
+        # Build data without trackCondition key
+        data = self._make_data("良")
+        del data["race_info"]["trackCondition"]
+        race_id = "202604270503"
+
+        with patch("backend.scraper.netkeiba.get_session", return_value=db):
+            from backend.scraper.netkeiba import _cache_race_card
+            _cache_race_card(race_id, data)
+
+        race = db.query(Race).filter(Race.race_id == race_id).first()
+        assert race is not None
+        # info.get("trackCondition", "") should have stored ""
+        assert race.track_condition == ""
+
+    def test_format_cached_track_condition_empty_when_column_none(self):
+        """_format_cached returns '' (not None) when track_condition column is None."""
+        from backend.database.models import Race, HorseEntry
+        from backend.scraper.netkeiba import _format_cached
+        from datetime import datetime
+
+        race = Race(
+            race_id="202604270504",
+            race_name="テスト",
+            race_number=3,
+            grade=None,
+            distance=1600,
+            surface="芝",
+            course_detail="",
+            start_time="11:00",
+            racecourse_code="05",
+            date="2026.04.27",
+            track_condition=None,   # simulate un-migrated DB row
+            head_count=0,
+            scraped_at=datetime.utcnow(),
+        )
+        result = _format_cached(race, [])
+        # getattr(race, "track_condition", "") or "" must absorb None
+        assert result["race_info"]["trackCondition"] == ""
