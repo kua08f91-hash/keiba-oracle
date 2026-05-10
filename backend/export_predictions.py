@@ -210,7 +210,16 @@ def main():
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False)
 
+    # Save per-date archive (振り返り用、上書きされない)
+    archive_dir = os.path.join(DOCS_DIR, "archive")
+    os.makedirs(archive_dir, exist_ok=True)
+    for day_data in all_dates_data:
+        date_file = os.path.join(archive_dir, f"predictions_{day_data['date']}.json")
+        with open(date_file, "w", encoding="utf-8") as f:
+            json.dump(day_data, f, ensure_ascii=False)
+
     print(f"\nExported to {output_file} ({os.path.getsize(output_file) // 1024} KB)")
+    print(f"Archived {len(all_dates_data)} date(s) to {archive_dir}/")
 
 
 def _load_performance_stats() -> dict:

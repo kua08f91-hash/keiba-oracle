@@ -236,12 +236,34 @@ def generate_candidates(
                         "_frame_map": frame_map,
                     })
 
-    # ── 馬連: top 6 pairs (was top 4 — expanded for 2-3着 coverage) ──
+    # ── 馬連: top 6 pairs + ◎×人気上位 (相手先精度向上) ──
+    # Base: top 6 AI pairs
+    umaren_seen = set()
     for h1, h2 in combinations(top_horses[:6], 2):
+        pair = tuple(sorted([h1, h2]))
+        umaren_seen.add(pair)
         candidates.append({
             "type": "umaren", "typeLabel": "馬連",
-            "horses": sorted([h1, h2]), "ordered": False,
+            "horses": list(pair), "ordered": False,
         })
+    # ◎流し拡張: ◎(top1) × 人気1-5位馬 (AI top6外でも人気なら相手候補に)
+    if entries and top_horses:
+        top1 = top_horses[0]
+        popular_horses = sorted(
+            [e["horseNumber"] for e in entries
+             if not e.get("isScratched") and e.get("popularity") and e["popularity"] <= 5],
+            key=lambda hn: next((e["popularity"] for e in entries if e["horseNumber"] == hn), 99),
+        )
+        for ph in popular_horses:
+            if ph == top1:
+                continue
+            pair = tuple(sorted([top1, ph]))
+            if pair not in umaren_seen:
+                umaren_seen.add(pair)
+                candidates.append({
+                    "type": "umaren", "typeLabel": "馬連",
+                    "horses": list(pair), "ordered": False,
+                })
 
     # ── 馬単: top 5 ordered pairs (was top 4) ──
     for h1, h2 in permutations(top_horses[:5], 2):
@@ -250,12 +272,32 @@ def generate_candidates(
             "horses": [h1, h2], "ordered": True,
         })
 
-    # ── ワイド: top 6 pairs (was top 5) ──
+    # ── ワイド: top 6 pairs + ◎×人気上位 ──
+    wide_seen = set()
     for h1, h2 in combinations(top_horses[:6], 2):
+        pair = tuple(sorted([h1, h2]))
+        wide_seen.add(pair)
         candidates.append({
             "type": "wide", "typeLabel": "ワイド",
-            "horses": sorted([h1, h2]), "ordered": False,
+            "horses": list(pair), "ordered": False,
         })
+    if entries and top_horses:
+        top1 = top_horses[0]
+        popular_horses_w = sorted(
+            [e["horseNumber"] for e in entries
+             if not e.get("isScratched") and e.get("popularity") and e["popularity"] <= 5],
+            key=lambda hn: next((e["popularity"] for e in entries if e["horseNumber"] == hn), 99),
+        )
+        for ph in popular_horses_w:
+            if ph == top1:
+                continue
+            pair = tuple(sorted([top1, ph]))
+            if pair not in wide_seen:
+                wide_seen.add(pair)
+                candidates.append({
+                    "type": "wide", "typeLabel": "ワイド",
+                    "horses": list(pair), "ordered": False,
+                })
 
     # ── 3連複: top 6 triples (was top 4 — 的中可能性3倍) ──
     for h1, h2, h3 in combinations(top_horses[:6], 3):
