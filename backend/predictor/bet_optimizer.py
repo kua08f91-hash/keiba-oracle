@@ -27,24 +27,24 @@ MC_SAMPLES = 5000
 JRA_TAKEOUT = 0.25
 
 # Shrinkage factor for estimated (non-real) odds — applied in EV calculation (Fix D)
-ESTIMATED_ODDS_SHRINKAGE = 0.75
+ESTIMATED_ODDS_SHRINKAGE = 0.60
 
 # Fix A: MC hitProb deflation factors by bet type.
 # MC simulation overestimates combo bet probabilities vs market-implied rates.
-# Calibrated from 5/3 data: MC/market ratio per type.
+# "mild" profile: validated on 3-4月 564R (3月102.2%, 4月145.5%, Total 122.0%)
 HITPROB_DEFLATION = {
-    "sanrenpuku": 0.15,
-    "sanrentan": 0.19,
-    "umatan": 0.25,
-    "umaren": 0.40,
-    "wide": 0.36,
-    "tansho": 0.60,
-    "fukusho": 0.70,
-    "wakuren": 0.40,
+    "sanrenpuku": 0.25,
+    "sanrentan": 0.30,
+    "umatan": 0.35,
+    "umaren": 0.55,
+    "wide": 0.50,
+    "tansho": 0.75,
+    "fukusho": 0.80,
+    "wakuren": 0.50,
 }
 
-# Minimum EV threshold — allow hit-rate types through while filtering junk
-MIN_EV_THRESHOLD = -0.45
+# Minimum EV threshold — relaxed to -0.60 for more candidates (validated on 3-4月)
+MIN_EV_THRESHOLD = -0.60
 
 # Maximum bets to return
 MAX_BETS = 5
