@@ -221,6 +221,13 @@ def _parse_race_info(soup: BeautifulSoup) -> dict:
                 "不良": "不良",
             }.get(cond_char, "")
 
+    # Race date: extract from page content (YYYY年M月D日 or similar patterns)
+    page_text = soup.get_text()
+    date_match = re.search(r"(\d{4})年(\d{1,2})月(\d{1,2})日", page_text)
+    if date_match:
+        y, m, d = date_match.groups()
+        info["date"] = f"{y}{int(m):02d}{int(d):02d}"
+
     return info
 
 
