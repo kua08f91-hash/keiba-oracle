@@ -108,6 +108,10 @@ def main():
                 entries = data["entries"]
                 info = data["race_info"]
 
+                # Use full race name from parser (race_list may truncate)
+                if info.get("raceName"):
+                    rname = info["raceName"]
+
                 # Validate frame numbers — re-fetch if missing
                 non_scratched = [e for e in entries if not e.get("isScratched")]
                 zero_frames = sum(1 for e in non_scratched if e.get("frameNumber", 0) == 0)
