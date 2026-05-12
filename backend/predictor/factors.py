@@ -91,7 +91,7 @@ def calc_market_score(odds: float | None, popularity: int | None, head_count: in
         score = 105 - 18 * math.log(max(odds, 1.1))
         return max(20, min(98, score))
 
-    return 45.0  # Unknown - slightly below average
+    return 50.0  # Unknown - neutral (no penalty when odds unavailable)
 
 
 def calc_course_affinity(sire_name: str, surface: str) -> float:

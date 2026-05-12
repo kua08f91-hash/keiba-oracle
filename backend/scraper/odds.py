@@ -212,7 +212,7 @@ def estimate_from_entries(entries: list) -> dict:
         if e.get("odds") and not e.get("isScratched"):
             horse_odds[e["horseNumber"]] = e["odds"]
 
-    if len(horse_odds) < 3:
+    if len(horse_odds) < 2:
         return {}
 
     # Sort by odds (favorites first)

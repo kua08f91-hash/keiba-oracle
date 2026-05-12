@@ -65,22 +65,29 @@ class RealtimeWorker:
     # ─── Step 1: Data Import ───
 
     def fetch_win_odds(self, race_id: str) -> dict:
-        """Fetch type 1 (単勝) odds from netkeiba API."""
-        try:
-            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
-            r = requests.get(url, headers={**API_H, "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}"}, timeout=10)
-            d = json.loads(r.text)
-            tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
-            result = {}
-            for hn_str, vals in tansho.items():
-                if isinstance(vals, list) and len(vals) >= 3:
-                    try:
-                        result[int(hn_str)] = {"odds": float(vals[0]), "popularity": int(vals[2])}
-                    except (ValueError, IndexError):
-                        pass
-            return result
-        except Exception:
-            return {}
+        """Fetch type 1 (単勝) odds from netkeiba API with retry."""
+        for attempt in range(3):
+            try:
+                url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
+                r = requests.get(url, headers={**API_H, "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}"}, timeout=15)
+                d = json.loads(r.text)
+                tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
+                result = {}
+                for hn_str, vals in tansho.items():
+                    if isinstance(vals, list) and len(vals) >= 3:
+                        try:
+                            result[int(hn_str)] = {"odds": float(vals[0]), "popularity": int(vals[2])}
+                        except (ValueError, IndexError):
+                            pass
+                if result:
+                    return result
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
+            except Exception as e:
+                logger.warning("fetch_win_odds attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    time.sleep(3 * (attempt + 1))
+        return {}
 
     def fetch_combination_odds(self, race_id: str):
         """Fetch types 4,5,7,8 (馬連/ワイド/3連複/3連単) from netkeiba API.

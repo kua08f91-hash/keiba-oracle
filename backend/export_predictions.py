@@ -33,22 +33,30 @@ DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 API_H = {"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"}
 
 
-def fetch_live_odds(rid):
-    try:
-        url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={rid}&type=1&action=init"
-        r = requests.get(url, headers={**API_H, "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={rid}"}, timeout=10)
-        d = json.loads(r.text)
-        t = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
-        res = {}
-        for h, v in t.items():
-            if isinstance(v, list) and len(v) >= 3:
-                try:
-                    res[int(h)] = {"odds": float(v[0]), "popularity": int(v[2])}
-                except:
-                    pass
-        return res
-    except:
-        return {}
+def fetch_live_odds(rid, max_retries=3):
+    """Fetch live win odds with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={rid}&type=1&action=init"
+            r = requests.get(url, headers={**API_H, "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={rid}"}, timeout=15)
+            d = json.loads(r.text)
+            t = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
+            res = {}
+            for h, v in t.items():
+                if isinstance(v, list) and len(v) >= 3:
+                    try:
+                        res[int(h)] = {"odds": float(v[0]), "popularity": int(v[2])}
+                    except (ValueError, IndexError):
+                        pass
+            if res:
+                return res
+            # Empty result — retry
+            if attempt < max_retries - 1:
+                time.sleep(3 * (attempt + 1))
+        except Exception:
+            if attempt < max_retries - 1:
+                time.sleep(3 * (attempt + 1))
+    return {}
 
 
 def fetch_combination_odds_live(rid):

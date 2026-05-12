@@ -28,7 +28,7 @@ class TestCalcMarketScore:
     def test_unknown_returns_default(self):
         from backend.predictor.factors import calc_market_score
         score = calc_market_score(odds=None, popularity=None, head_count=16)
-        assert score == 45.0
+        assert score == 50.0
 
     def test_score_within_bounds(self):
         from backend.predictor.factors import calc_market_score
