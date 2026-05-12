@@ -22,7 +22,7 @@
     "courseAffinity": 0.0036,
     "distanceAptitude": 0.0605
   },
-  "market_weight": 0.147,
+  "market_weight": 0.40,
   "baseline_train": {
     "202304": 1.7743,
     "202305": 1.3354,
