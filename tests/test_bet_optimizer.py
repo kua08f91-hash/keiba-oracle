@@ -1680,3 +1680,100 @@ class TestPopularityExpansion:
 
         assert (1, 30) in umaren_pairs, "Horse with popularity=5 must be included"
         assert (1, 31) not in umaren_pairs, "Horse with popularity=6 must NOT be included"
+
+
+# =====================================================================
+# ODDS PIPELINE HARDENING — Change 3: estimate_from_entries threshold 3→2
+# =====================================================================
+class TestEstimateThreshold:
+    """Verify estimate_from_entries works with exactly 2 horses having odds
+    and returns {} when fewer than 2 horses have odds.
+
+    Change: minimum threshold reduced from 3 to 2.
+    """
+
+    def _make_entry(
+        self,
+        horse_number: int,
+        odds: float | None,
+        is_scratched: bool = False,
+    ) -> dict:
+        """Minimal valid entry dict for estimate_from_entries."""
+        return {
+            "horseNumber": horse_number,
+            "horseName": f"Horse{horse_number}",
+            "odds": odds,
+            "isScratched": is_scratched,
+        }
+
+    def test_two_horses_with_odds_returns_non_empty(self):
+        """Exactly 2 non-scratched horses with valid odds must produce a
+        non-empty dict — the new threshold of 2 (was 3) must be honoured."""
+        from backend.scraper.odds import estimate_from_entries
+        entries = [
+            self._make_entry(1, 2.5),
+            self._make_entry(2, 5.0),
+        ]
+        result = estimate_from_entries(entries)
+        assert isinstance(result, dict), "Return type must be dict"
+        assert len(result) > 0, (
+            "estimate_from_entries with exactly 2 horses having odds must "
+            "return non-empty dict (threshold changed from 3 to 2)."
+        )
+        # At minimum tansho and fukusho entries should be present
+        assert "tansho" in result, "tansho key must be present with 2 horses"
+
+    def test_one_horse_with_odds_returns_empty(self):
+        """Only 1 horse having valid odds is still below the threshold of 2,
+        so the function must return {}."""
+        from backend.scraper.odds import estimate_from_entries
+        entries = [
+            self._make_entry(1, 2.5),
+            self._make_entry(2, None),   # no odds
+            self._make_entry(3, None),   # no odds
+        ]
+        result = estimate_from_entries(entries)
+        assert result == {}, (
+            "Only 1 horse with odds is below the 2-horse threshold; "
+            f"expected {{}} but got keys: {list(result.keys())}"
+        )
+
+    def test_no_horses_with_odds_returns_empty(self):
+        """When no horses have valid odds the function must return {}."""
+        from backend.scraper.odds import estimate_from_entries
+        entries = [
+            self._make_entry(1, None),
+            self._make_entry(2, None),
+            self._make_entry(3, None),
+        ]
+        result = estimate_from_entries(entries)
+        assert result == {}, (
+            f"No horses with odds should give {{}}; got keys: {list(result.keys())}"
+        )
+
+    def test_mix_of_odds_and_none_uses_only_valid_odds(self):
+        """Horses with odds=None or isScratched=True must be excluded from
+        the count.  Only those with a truthy odds value count toward the
+        minimum-2 threshold."""
+        from backend.scraper.odds import estimate_from_entries
+        entries = [
+            self._make_entry(1, 3.0),                       # counted
+            self._make_entry(2, None),                      # excluded: no odds
+            self._make_entry(3, 8.0, is_scratched=True),    # excluded: scratched
+            self._make_entry(4, 12.0),                      # counted
+            self._make_entry(5, None),                      # excluded: no odds
+        ]
+        result = estimate_from_entries(entries)
+        # Horses 1 and 4 have valid odds → meets threshold of 2
+        assert len(result) > 0, (
+            "2 valid (non-scratched, non-None odds) horses should satisfy "
+            "the threshold; estimate_from_entries should return non-empty dict."
+        )
+        # Verify that scratched and None-odds horses are not in tansho results
+        tansho_horse_nums = [e["horses"][0] for e in result.get("tansho", [])]
+        assert 3 not in tansho_horse_nums, (
+            "Scratched horse (3) must not appear in tansho estimates."
+        )
+        assert 2 not in tansho_horse_nums, (
+            "Horse with odds=None (2) must not appear in tansho estimates."
+        )

@@ -37,6 +37,60 @@ class TestCalcMarketScore:
             assert 0 <= score <= 100
 
 
+# =====================================================================
+# ODDS PIPELINE HARDENING — Change 2: calc_market_score default 50.0
+# =====================================================================
+class TestOddsPipelineHardening:
+    """Verify calc_market_score returns 50.0 (neutral) when no market data
+    is available, and returns a non-50 value when real data is supplied.
+
+    Change: default 45.0 → 50.0 when both odds and popularity are None.
+    """
+
+    def test_both_none_returns_50(self):
+        """When odds=None AND popularity=None the function must return exactly
+        50.0 — the neutral score, not the old 45.0 penalty."""
+        from backend.predictor.factors import calc_market_score
+        score = calc_market_score(odds=None, popularity=None, head_count=16)
+        assert score == 50.0, (
+            f"Expected 50.0 (neutral default), got {score}. "
+            "The old 45.0 penalty has been removed — check factors.py."
+        )
+
+    def test_zero_odds_and_zero_popularity_returns_50(self):
+        """odds=0 and popularity=0 are treated as falsy/missing, so the
+        function must fall through to the 50.0 default, not the odds branch."""
+        from backend.predictor.factors import calc_market_score
+        score = calc_market_score(odds=0, popularity=0, head_count=16)
+        assert score == 50.0, (
+            f"Zero odds and zero popularity should both be ignored, "
+            f"giving 50.0 neutral; got {score}."
+        )
+
+    def test_valid_odds_returns_non_50(self):
+        """When a real odds value is provided the score must differ from 50.0,
+        confirming the odds branch is still active for genuine data."""
+        from backend.predictor.factors import calc_market_score
+        score = calc_market_score(odds=3.5, popularity=None, head_count=16)
+        assert score != 50.0, (
+            "A valid odds value should produce a non-neutral score, "
+            f"but got {score}."
+        )
+        # Also verify it is within the valid 0-100 range
+        assert 0 <= score <= 100
+
+    def test_valid_popularity_returns_non_50(self):
+        """When a real popularity rank is provided the score must differ from
+        50.0, confirming the popularity branch is still active."""
+        from backend.predictor.factors import calc_market_score
+        score = calc_market_score(odds=None, popularity=2, head_count=16)
+        assert score != 50.0, (
+            "A valid popularity rank should produce a non-neutral score, "
+            f"but got {score}."
+        )
+        assert 0 <= score <= 100
+
+
 class TestCalcPastPerformance:
     def test_all_wins_scores_high(self):
         from backend.predictor.factors import calc_past_performance
