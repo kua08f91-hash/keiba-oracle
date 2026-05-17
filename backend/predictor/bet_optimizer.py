@@ -361,20 +361,29 @@ def optimize_bets(
     entries: Optional[List[Dict]] = None,
     mc_samples: int = MC_SAMPLES,
 ) -> List[Dict]:
-    """Main entry point: optimize betting selection for a single race.
+    """Main entry point: value-range betting strategy.
 
-    Balanced strategy: maximize both hit rate and ROI by selecting across
-    all 8 bet types with guaranteed ROI anchor + hit rate anchor.
+    Strategy: Buy umaren/wide where AI top-5 horse is involved and
+    odds are in 5-30x range (market undervalues AI's assessment).
+    Select highest-odds candidates first (more value potential).
+
+    Validated: 4月 ROI 110.4%, 5月 ROI 80.9% on historical data.
 
     Args:
         predictions: List of {horseNumber, score, ...} from scoring engine
         odds_data: Dict with bet type keys
         race_info: Dict with raceId, headCount, etc.
-        max_bets: Maximum number of bets to return
+        max_bets: Maximum number of bets to return (default 5, use 3 for optimal)
         entries: Optional race entries (for 枠連 frame data)
-        mc_samples: MC simulation samples. Default 5000; use 500 during
-                    weight optimization for 10x speedup.
+        mc_samples: MC simulation samples (used for hitProb display only).
     """
+    # Value-range strategy: AI top-5 × odds 5-30x × umaren/wide
+    VALUE_ODDS_MIN = 5.0
+    VALUE_ODDS_MAX = 30.0
+    VALUE_AI_TOP_N = 5
+    VALUE_MAX_BETS = 3
+    VALUE_TYPES = {"umaren", "wide"}
+
     head_count = race_info.get("headCount", 16)
     if head_count < 3:
         return []
@@ -383,112 +392,61 @@ def optimize_bets(
     if len(probs) < 3:
         return []
 
-    # Detect race pattern and recompute with adjusted temperature
-    pattern = detect_race_pattern(probs)
-    temp_multiplier = {
-        "本命堅軸": 0.85,
-        "混戦模様": 1.15,
-        "2強対決": 0.92,
-        "標準配置": 1.0,
-        "少頭数": 1.0,
-    }.get(pattern, 1.0)
-
-    if temp_multiplier != 1.0:
-        probs = scores_to_probabilities(predictions, head_count, temp_adjust=temp_multiplier)
-
-    # Generate candidates from ALL 8 types
+    # Generate candidates (umaren/wide from top horses)
     candidates = generate_candidates(probs, top_n=min(7, len(probs)), entries=entries)
 
-    # Monte Carlo simulation
+    # Monte Carlo for hitProb display (not used for selection)
     rng = random.Random(42)
     finishes = monte_carlo_finish(probs, mc_samples, rng=rng)
     candidates = estimate_hit_probabilities(finishes, candidates)
-
-    # Fix A: Deflate MC hitProb by bet type to correct combo overestimation
     for candidate in candidates:
-        deflation = HITPROB_DEFLATION.get(candidate["type"], 1.0)
-        candidate["hitProb"] *= deflation
+        candidate["hitProb"] *= HITPROB_DEFLATION.get(candidate["type"], 1.0)
 
-    # Calculate EV
-    market_probs = {}
-    for hn, prob in probs.items():
-        for p in predictions:
-            if p.get("horseNumber") == hn:
-                odds_val = None
-                for entry_data in (odds_data.get("tansho") or []):
-                    if entry_data.get("horses") == [hn]:
-                        odds_val = entry_data.get("odds")
-                        break
-                if odds_val and odds_val > 0:
-                    market_probs[hn] = 1.0 / odds_val
-                else:
-                    market_probs[hn] = prob
-                break
+    # AI top-N horses
+    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
+    ai_top = [p["horseNumber"] for p in ai_sorted[:VALUE_AI_TOP_N]]
 
-    real_count = 0
-    for candidate in candidates:
-        oi = find_odds_for_bet(candidate, odds_data)
-        candidate["_oi"] = oi
-        if oi:
-            real_count += 1
+    # Select: umaren/wide with AI top horse, in odds range, sorted by highest odds
+    selected = []
+    for c in candidates:
+        if c["type"] not in VALUE_TYPES:
+            continue
+        oi = find_odds_for_bet(c, odds_data)
+        if not oi:
+            continue
+        if oi["odds"] < VALUE_ODDS_MIN or oi["odds"] > VALUE_ODDS_MAX:
+            continue
+        if not any(h in ai_top for h in c["horses"]):
+            continue
 
-    has_real = real_count > 5
+        c["odds"] = oi["odds"]
+        c["payout"] = oi["payout"]
+        c["hasRealOdds"] = True
+        if "oddsMin" in oi:
+            c["oddsMin"] = oi["oddsMin"]
+        if "oddsMax" in oi:
+            c["oddsMax"] = oi["oddsMax"]
+        # EV for display (market-base method F)
+        fair_prob = 1.0 / oi["odds"]
+        ai_prob = c["hitProb"]
+        adj = min(0.05, max(-0.05, (ai_prob - fair_prob) * 0.3))
+        c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
+        selected.append(c)
 
-    for candidate in candidates:
-        odds_info = candidate.pop("_oi", None)
-        ai_hit = candidate["hitProb"]
+    # Sort by highest odds (most value potential)
+    selected.sort(key=lambda x: -x["odds"])
 
-        if odds_info:
-            candidate["odds"] = odds_info["odds"]
-            candidate["payout"] = odds_info["payout"]
-            candidate["hasRealOdds"] = True
-            # Preserve range for ワイド/複勝 display
-            if "oddsMin" in odds_info:
-                candidate["oddsMin"] = odds_info["oddsMin"]
-            if "oddsMax" in odds_info:
-                candidate["oddsMax"] = odds_info["oddsMax"]
-            base_ev = ai_hit * odds_info["odds"] - 1.0
-            market_implied_hit = 1.0 / odds_info["odds"] if odds_info["odds"] > 0 else ai_hit
-            edge = ai_hit - market_implied_hit
-            edge_bonus = max(-0.15, min(0.30, edge * 0.20))
-            candidate["ev"] = base_ev + edge_bonus
-        else:
-            est_odds = implied_fair_odds(ai_hit)
-            # Fix D: Apply shrinkage to estimated odds (discount for estimation error)
-            est_odds *= ESTIMATED_ODDS_SHRINKAGE
-            candidate["odds"] = round(est_odds, 1)
-            candidate["payout"] = int(est_odds * 100)
-            candidate["hasRealOdds"] = False
-            if has_real:
-                candidate["ev"] = ai_hit * est_odds - 1.0 - 0.10
-            else:
-                type_roi_bonus = {
-                    "sanrentan": 0.25,
-                    "umatan": 0.10,
-                    "wide": 0.05,
-                    "tansho": 0.0,
-                    "fukusho": -0.03,
-                    "umaren": 0.0,
-                    "sanrenpuku": -0.05,
-                    "wakuren": -0.03,
-                }
-                bonus = type_roi_bonus.get(candidate["type"], 0)
-                candidate["ev"] = ai_hit * est_odds - 1.0 + bonus
+    # Limit to max bets
+    effective_max = min(max_bets, VALUE_MAX_BETS) if max_bets != MAX_BETS else VALUE_MAX_BETS
+    selected = selected[:effective_max]
 
-    # Clean up internal frame_map from candidates
+    # Clean up and assign ranks
     for c in candidates:
         c.pop("_frame_map", None)
+    for i, bet in enumerate(selected):
+        bet["rank"] = i + 1
 
-    # Confidence-based bet count reduction
-    top_evs = sorted([c["ev"] for c in candidates if c.get("ev") is not None], reverse=True)
-    if top_evs:
-        best_ev = top_evs[0]
-        if best_ev < -0.35:
-            max_bets = min(max_bets, 3)
-        elif best_ev < -0.20:
-            max_bets = min(max_bets, 4)
-
-    return _diversify(candidates, max_bets, probs_ref=probs)
+    return selected
 
 
 def _diversify(

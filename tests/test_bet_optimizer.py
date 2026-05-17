@@ -142,21 +142,16 @@ class TestOptimizeBets:
             assert "hitProb" in bet
             assert "rank" in bet
 
-    def test_bets_have_diverse_types(self, sample_predictions, sample_odds_data, sample_race_info):
+    def test_bets_are_umaren_or_wide_only(self, sample_predictions, sample_odds_data, sample_race_info):
         from backend.predictor.bet_optimizer import optimize_bets
         bets = optimize_bets(sample_predictions, sample_odds_data, sample_race_info)
-        if len(bets) >= 3:
-            # v8: balanced strategy guarantees type diversity
-            types = {b["type"] for b in bets}
-            assert len(types) >= 2  # At least 2 different types
+        for b in bets:
+            assert b["type"] in ("umaren", "wide"), f"Unexpected type: {b['type']}"
 
-    def test_diversification_max_2_per_type(self, sample_predictions, sample_odds_data, sample_race_info):
+    def test_max_3_bets_per_race(self, sample_predictions, sample_odds_data, sample_race_info):
         from backend.predictor.bet_optimizer import optimize_bets
         bets = optimize_bets(sample_predictions, sample_odds_data, sample_race_info)
-        from collections import Counter
-        type_counts = Counter(b["type"] for b in bets)
-        for t, count in type_counts.items():
-            assert count <= 2, f"{t} has {count} bets, max 2"
+        assert len(bets) <= 3
 
     def test_no_bets_for_tiny_field(self, sample_race_info):
         from backend.predictor.bet_optimizer import optimize_bets
@@ -706,6 +701,9 @@ class TestMinOddsByType:
         assert len(result) == 1
 
 
+import pytest
+
+@pytest.mark.skip(reason="ConfidenceGate removed in v11 value-range strategy")
 class TestConfidenceGate:
     """Tests for confidence-based bet count reduction inside optimize_bets.
 
