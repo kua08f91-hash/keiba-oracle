@@ -415,7 +415,9 @@ async function _refreshLiveOdds(raceId){
     if(!r.ok)return;
     const data=await r.json();
     const liveEntries=data.entries||[];
+    const livePreds=data.predictions||[];
     if(!liveEntries.length)return;
+    // Update entries (odds + popularity)
     let updated=0;
     for(const le of liveEntries){
       const idx=dE.findIndex(e=>e.horseNumber===le.horseNumber);
@@ -423,8 +425,17 @@ async function _refreshLiveOdds(raceId){
         if(dE[idx].odds!==le.odds){dE[idx].odds=le.odds;dE[idx].popularity=le.popularity;updated++;}
       }
     }
+    // Update predictions (scores + marks recalculated with live odds)
+    if(livePreds.length>0){
+      dP=livePreds;updated++;
+    }
     if(updated>0){
       renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
+      // Also refresh bets from API
+      try{
+        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});
+        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;}
+      }catch(e2){}
       renderBets();
     }
   }catch(e){}
