@@ -463,6 +463,39 @@ def _parse_past_race_td(td) -> Optional[dict]:
         else:
             running_style = "追込"
 
+    # 上がり3F (last 3 furlong time) — from Data06 "(34.0)" pattern
+    agari3f = 0.0
+    if data06:
+        agari_match = re.search(r"\((\d+\.\d)\)", data06_text)
+        if agari_match:
+            try:
+                agari3f = float(agari_match.group(1))
+            except ValueError:
+                pass
+    if agari3f == 0.0:
+        # Fallback from full text
+        agari_match = re.search(r"\((\d{2}\.\d)\)", text)
+        if agari_match:
+            try:
+                agari3f = float(agari_match.group(1))
+            except ValueError:
+                pass
+
+    # 着差 (margin from winner) — from Data07 "馬名(0.4)" pattern
+    margin = 0.0
+    try:
+        data07 = td.select_one(".Data07")
+    except (AttributeError, TypeError):
+        data07 = None
+    if data07:
+        try:
+            d07_text = str(data07.get_text(strip=True))
+            margin_match = re.search(r"\((\d+\.\d)\)", d07_text)
+            if margin_match:
+                margin = float(margin_match.group(1))
+        except (AttributeError, TypeError):
+            pass
+
     return {
         "pos": pos,
         "condition": condition,
@@ -478,6 +511,8 @@ def _parse_past_race_td(td) -> Optional[dict]:
         "weightCarried": weight_carried,
         "corners": corners,
         "runningStyle": running_style,
+        "agari3f": agari3f,
+        "margin": margin,
     }
 
 

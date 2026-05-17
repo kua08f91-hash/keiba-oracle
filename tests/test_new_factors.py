@@ -688,12 +688,12 @@ class TestParsePastRaceTd:
         result = self._parse(text)
         assert result["condition"] == "重"
 
-    def test_output_has_all_14_keys(self):
+    def test_output_has_all_16_keys(self):
         result = self._parse(SAMPLE_TEXT)
         expected_keys = {
             "pos", "condition", "surface", "distance", "track", "direction",
             "date", "finishTime", "fieldSize", "postPosition", "popularity",
-            "weightCarried", "corners", "runningStyle",
+            "weightCarried", "corners", "runningStyle", "agari3f", "margin",
         }
         assert expected_keys == set(result.keys())
 

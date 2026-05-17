@@ -769,3 +769,122 @@ def calc_track_specific(past_races: list, racecourse_code: str) -> float:
         return 70.0
     else:
         return 55.0
+
+
+def calc_agari3f_score(past_races: list, surface: str = "") -> float:
+    """Score based on average last-3-furlong time (上がり3F).
+
+    Faster agari = stronger finishing kick = higher score.
+    Surface-specific: turf agari ~33-36s, dirt ~36-40s.
+    """
+    agari_times = []
+    for pr in past_races:
+        a = pr.get("agari3f", 0)
+        if a > 0:
+            # Filter by same surface if specified
+            if surface and pr.get("surface"):
+                pr_surface = "芝" if pr["surface"] == "芝" else "ダート" if pr["surface"] in ("ダ", "ダート") else ""
+                if surface and pr_surface and surface != pr_surface:
+                    continue
+            agari_times.append(a)
+
+    if not agari_times:
+        return 50.0
+
+    avg_agari = sum(agari_times) / len(agari_times)
+
+    # Score: faster = better. Turf benchmark ~34.0, dirt ~37.0
+    if surface == "芝":
+        score = max(20, min(95, 130 - avg_agari * 2.5))
+    else:
+        score = max(20, min(95, 145 - avg_agari * 2.5))
+
+    return round(score, 1)
+
+
+def calc_margin_score(past_races: list) -> float:
+    """Score based on average margin from winner (着差).
+
+    Smaller margin = closer to winning = higher score.
+    Margin 0.0 = won the race.
+    """
+    margins = []
+    for pr in past_races:
+        m = pr.get("margin", 0)
+        pos = pr.get("pos", 0)
+        if pos > 0 and pos <= 18:
+            if pos == 1:
+                margins.append(0.0)
+            elif m > 0:
+                margins.append(m)
+
+    if not margins:
+        return 50.0
+
+    avg_margin = sum(margins) / len(margins)
+
+    # Score: 0.0 margin = 95, 0.5 = 80, 1.0 = 65, 2.0 = 40, 3.0+ = 25
+    score = max(20, min(95, 95 - avg_margin * 25))
+    return round(score, 1)
+
+
+def calc_pace_predict(entries: list) -> float:
+    """Predict pace from running styles of all entered horses.
+
+    More front-runners (逃げ/先行) = faster pace = favors closers.
+    Returns score relative to each horse's running style.
+    """
+    if not entries:
+        return 50.0
+
+    styles = []
+    for e in entries:
+        if e.get("isScratched"):
+            continue
+        prs = e.get("pastRaces", [])
+        for pr in prs[:3]:  # Recent 3 races
+            rs = pr.get("runningStyle", "")
+            if rs:
+                styles.append(rs)
+
+    if not styles:
+        return 50.0
+
+    front_count = sum(1 for s in styles if s in ("逃げ", "先行"))
+    total = len(styles)
+    front_ratio = front_count / total if total > 0 else 0.5
+
+    # High front ratio = fast pace expected
+    # Score: 0.5 (neutral) = 50, high ratio = favor closers
+    return round(50 + (front_ratio - 0.5) * 60, 1)
+
+
+def calc_draw_bias(post_position: int, head_count: int, surface: str = "",
+                   distance: int = 0, course_detail: str = "") -> float:
+    """Score based on post position (枠順) advantage.
+
+    Inner posts generally favor shorter races; outer posts can be
+    advantageous in longer races with early pace.
+    """
+    if post_position <= 0 or head_count <= 0:
+        return 50.0
+
+    # Normalize position: 0.0 (innermost) to 1.0 (outermost)
+    norm_pos = (post_position - 1) / max(head_count - 1, 1)
+
+    # Default: slight inner bias (JRA average)
+    bias = -5.0  # Inner advantage
+
+    # Sprint races (≤1400m): stronger inner bias
+    if distance > 0 and distance <= 1400:
+        bias = -10.0
+    # Long races (≥2400m): less bias or slight outer advantage
+    elif distance > 0 and distance >= 2400:
+        bias = 0.0
+
+    # Small fields: position matters less
+    if head_count <= 8:
+        bias *= 0.5
+
+    score = 50.0 + bias * (0.5 - norm_pos)
+    return round(max(30, min(70, score)), 1)

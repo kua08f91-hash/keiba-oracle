@@ -36,6 +36,10 @@ from .factors import (
     calc_speed_figure,
     calc_weight_carried_trend,
     calc_days_since_last_race,
+    calc_agari3f_score,
+    calc_margin_score,
+    calc_pace_predict,
+    calc_draw_bias,
 )
 
 # Analytical factor weights (non-market factors, must sum to ~1.0)
@@ -88,7 +92,8 @@ ALL_FACTOR_KEYS = ["marketScore", "pastPerformance", "jockeyAbility",
                    "trackCondition", "trackDirection", "trackSpecific",
                    "ageAndSex", "weightCarried", "horseWeightChange",
                    "formTrend", "sameDistance", "sameSurface", "sameCondition",
-                   "speedFigure", "runningStyle", "daysSinceLast", "weightCarriedTrend"]
+                   "speedFigure", "runningStyle", "daysSinceLast", "weightCarriedTrend",
+                   "agari3f", "marginScore", "drawBias"]
 
 
 class WeightedScoringModel(PredictionModel):
@@ -109,6 +114,9 @@ class WeightedScoringModel(PredictionModel):
         course_detail = race_info.get("courseDetail", "")
         racecourse_code = race_info.get("racecourseCode", "")
         race_date = race_info.get("date", "")  # YYYYMMDD → convert to YYYY.MM.DD later
+
+        # Race-level pace prediction (shared across all entries)
+        pace_score = calc_pace_predict(entries)
 
         raw_data = []
         for entry in entries:
@@ -153,6 +161,12 @@ class WeightedScoringModel(PredictionModel):
                 "runningStyle": calc_running_style_consistency(past_races),
                 "daysSinceLast": calc_days_since_last_race(past_races, race_date_norm),
                 "weightCarriedTrend": calc_weight_carried_trend(past_races, weight),
+                "agari3f": calc_agari3f_score(past_races, surface),
+                "marginScore": calc_margin_score(past_races),
+                "drawBias": calc_draw_bias(
+                    entry.get("frameNumber", entry.get("horseNumber", 0)),
+                    head_count, surface, distance, course_detail,
+                ),
             }
 
             # Analytical score (non-market factors only)
