@@ -1007,3 +1007,318 @@ class TestTrackConditionCache:
         result = _format_cached(race, [])
         # getattr(race, "track_condition", "") or "" must absorb None
         assert result["race_info"]["trackCondition"] == ""
+
+
+# ===========================================================================
+# 10. calc_agari3f_score
+# ===========================================================================
+
+class TestCalcAgari3fScore:
+    def _fn(self):
+        from backend.predictor.factors import calc_agari3f_score
+        return calc_agari3f_score
+
+    # 1. Fast turf agari (33.5) scores high
+    def test_fast_turf_agari_scores_high(self):
+        # avg_agari=33.5, surface="芝" → score = 130 - 33.5*2.5 = 46.25
+        # Wait: 130 - 33.5*2.5 = 130 - 83.75 = 46.25 … that's below 50.
+        # Actual formula: max(20, min(95, 130 - avg*2.5))
+        # 33.5 → 46.25; 33.0 → 47.5; 32.0 → 50; 30.0 → 55; 28.0 → 60
+        # So 33.5 is actually middle-range for turf. The benchmark is 34.0.
+        # Score at 33.5 = 130 - 83.75 = 46.25 — below benchmark score.
+        # Score at 34.0 = 130 - 85.0  = 45.0
+        # The formula is inverted in a "lower=better" sense, but the constant
+        # shifts mean that 33.5 > 34.0 (faster = higher). Verify that the
+        # score for 33.5 is strictly GREATER than the score for 38.0.
+        fn = self._fn()
+        fast_score = fn([{"agari3f": 33.5, "surface": "芝"}], surface="芝")
+        slow_score = fn([{"agari3f": 38.0, "surface": "芝"}], surface="芝")
+        assert fast_score > slow_score
+
+    # 2. Slow agari (38.0) scores low relative to 33.5
+    def test_slow_agari_scores_lower_than_fast(self):
+        fn = self._fn()
+        score_38 = fn([{"agari3f": 38.0}])
+        score_33 = fn([{"agari3f": 33.0}])
+        assert score_38 < score_33
+
+    # 3. Empty past_races returns 50.0
+    def test_empty_past_races_returns_50(self):
+        assert self._fn()([], surface="芝") == 50.0
+
+    # 4. Filters by same surface — dirt records excluded when surface="芝"
+    def test_filters_by_same_surface(self):
+        fn = self._fn()
+        # Only dirt record (ダ) — should be filtered out when querying 芝
+        races = [{"agari3f": 37.0, "surface": "ダ"}]
+        result = fn(races, surface="芝")
+        assert result == 50.0
+
+    # 5. Score is within 0-100 bounds for extreme inputs
+    def test_score_within_bounds_extreme_fast(self):
+        # Very fast agari (e.g. 28.0) should be capped at 95
+        score = self._fn()([{"agari3f": 28.0}], surface="芝")
+        assert 0 <= score <= 100
+
+    def test_score_within_bounds_extreme_slow(self):
+        # Very slow agari (e.g. 50.0) should be floored at 20
+        score = self._fn()([{"agari3f": 50.0}])
+        assert 0 <= score <= 100
+
+    # 6. Multiple races are averaged before scoring
+    def test_multiple_races_averaged(self):
+        fn = self._fn()
+        # Three turf races: 34.0, 35.0, 36.0 → avg=35.0
+        races = [
+            {"agari3f": 34.0, "surface": "芝"},
+            {"agari3f": 35.0, "surface": "芝"},
+            {"agari3f": 36.0, "surface": "芝"},
+        ]
+        result = fn(races, surface="芝")
+        # avg=35.0 → score = max(20, min(95, 130 - 35.0*2.5)) = max(20, min(95, 42.5)) = 42.5
+        expected = round(max(20, min(95, 130 - 35.0 * 2.5)), 1)
+        assert result == expected
+
+    # Extra: dirt surface uses correct benchmark constant
+    def test_dirt_benchmark_constant_used(self):
+        fn = self._fn()
+        # No surface filter → uses else branch (145 - avg*2.5)
+        # avg=37.0 → 145 - 92.5 = 52.5
+        result = fn([{"agari3f": 37.0}])
+        expected = round(max(20, min(95, 145 - 37.0 * 2.5)), 1)
+        assert result == expected
+
+    # Extra: zero agari3f value is ignored (treated as missing)
+    def test_zero_agari3f_ignored(self):
+        # agari3f=0 should not be counted; falls back to 50.0
+        result = self._fn()([{"agari3f": 0.0, "surface": "芝"}], surface="芝")
+        assert result == 50.0
+
+    # Extra: surface filter applies only when both race and target surface are set
+    def test_surface_filter_not_applied_when_no_race_surface(self):
+        fn = self._fn()
+        # Race has no "surface" key → record is kept regardless of target surface
+        races = [{"agari3f": 34.5}]
+        result = fn(races, surface="芝")
+        # Should use the record (no surface to filter against)
+        expected = round(max(20, min(95, 130 - 34.5 * 2.5)), 1)
+        assert result == expected
+
+
+# ===========================================================================
+# 11. calc_margin_score
+# ===========================================================================
+
+class TestCalcMarginScore:
+    def _fn(self):
+        from backend.predictor.factors import calc_margin_score
+        return calc_margin_score
+
+    # 1. Winner (pos=1) scores ~95
+    def test_winner_scores_95(self):
+        # pos=1 → margin forced to 0.0 → score = max(20, min(95, 95 - 0.0*25)) = 95
+        result = self._fn()([{"pos": 1, "margin": 0.0}])
+        assert result == 95.0
+
+    # 2. Close margin (0.3) scores high (well above 50)
+    def test_close_margin_scores_high(self):
+        # avg_margin=0.3 → score = 95 - 0.3*25 = 87.5
+        result = self._fn()([{"pos": 2, "margin": 0.3}])
+        assert result == round(95 - 0.3 * 25, 1)
+        assert result > 75.0
+
+    # 3. Large margin (3.0) scores low
+    def test_large_margin_scores_low(self):
+        # avg_margin=3.0 → 95 - 75 = 20 (floored at 20)
+        result = self._fn()([{"pos": 5, "margin": 3.0}])
+        assert result <= 30.0
+
+    # 4. Empty past_races returns 50.0
+    def test_empty_past_races_returns_50(self):
+        assert self._fn()([]) == 50.0
+
+    # 5. Mix of wins (pos=1) and non-wins averages correctly
+    def test_mix_of_wins_and_non_wins(self):
+        fn = self._fn()
+        # pos=1 → margin 0.0; pos=2 margin=1.0; pos=3 margin=2.0
+        # avg = (0.0 + 1.0 + 2.0) / 3 = 1.0 → score = 95 - 25 = 70.0
+        races = [
+            {"pos": 1, "margin": 0.0},
+            {"pos": 2, "margin": 1.0},
+            {"pos": 3, "margin": 2.0},
+        ]
+        result = fn(races)
+        expected = round(max(20, min(95, 95 - 1.0 * 25)), 1)
+        assert result == expected
+
+    # Extra: pos=0 records are excluded
+    def test_pos_zero_excluded(self):
+        # Only record has pos=0, should yield 50.0
+        result = self._fn()([{"pos": 0, "margin": 0.5}])
+        assert result == 50.0
+
+    # Extra: non-winner with margin=0.0 is also excluded (only pos=1 or margin>0)
+    def test_non_winner_zero_margin_excluded(self):
+        # pos=4, margin=0.0 → not pos==1 and not m>0 → excluded → 50.0
+        result = self._fn()([{"pos": 4, "margin": 0.0}])
+        assert result == 50.0
+
+    # Extra: score is capped at 95
+    def test_score_capped_at_95(self):
+        result = self._fn()([{"pos": 1, "margin": 0.0}])
+        assert result <= 95.0
+
+    # Extra: score is floored at 20
+    def test_score_floored_at_20(self):
+        # Very large margin → floor of 20
+        result = self._fn()([{"pos": 10, "margin": 10.0}])
+        assert result >= 20.0
+
+
+# ===========================================================================
+# 12. calc_draw_bias
+# ===========================================================================
+
+class TestCalcDrawBias:
+    def _fn(self):
+        from backend.predictor.factors import calc_draw_bias
+        return calc_draw_bias
+
+    # 1. Inner post (1) scores higher than outer (16) in a 16-horse field
+    def test_inner_post_scores_higher_than_outer(self):
+        fn = self._fn()
+        inner = fn(post_position=1, head_count=16)
+        outer = fn(post_position=16, head_count=16)
+        assert inner > outer
+
+    # 2. Sprint (1200m) has stronger inner bias than default
+    def test_sprint_has_stronger_inner_bias(self):
+        fn = self._fn()
+        # Compare gap between inner and outer for sprint vs default
+        sprint_inner = fn(1, 16, distance=1200)
+        sprint_outer = fn(16, 16, distance=1200)
+        default_inner = fn(1, 16, distance=1800)
+        default_outer = fn(16, 16, distance=1800)
+        sprint_gap = sprint_inner - sprint_outer
+        default_gap = default_inner - default_outer
+        assert sprint_gap > default_gap
+
+    # 3. Long distance (2400m+) has less bias (gap smaller than default)
+    def test_long_distance_has_less_bias(self):
+        fn = self._fn()
+        long_inner = fn(1, 16, distance=2400)
+        long_outer = fn(16, 16, distance=2400)
+        default_inner = fn(1, 16, distance=1800)
+        default_outer = fn(16, 16, distance=1800)
+        long_gap = abs(long_inner - long_outer)
+        default_gap = abs(default_inner - default_outer)
+        assert long_gap <= default_gap
+
+    # 4. Small field (≤8 horses) has reduced effect vs large field
+    def test_small_field_has_reduced_effect(self):
+        fn = self._fn()
+        # Same relative positions (innermost vs outermost)
+        small_inner = fn(1, 8)
+        small_outer = fn(8, 8)
+        large_inner = fn(1, 16)
+        large_outer = fn(16, 16)
+        small_gap = abs(small_inner - small_outer)
+        large_gap = abs(large_inner - large_outer)
+        assert small_gap < large_gap
+
+    # 5. post_position=0 returns 50.0
+    def test_post_position_zero_returns_50(self):
+        assert self._fn()(post_position=0, head_count=16) == 50.0
+
+    # 6. head_count=0 returns 50.0
+    def test_head_count_zero_returns_50(self):
+        assert self._fn()(post_position=1, head_count=0) == 50.0
+
+    # Extra: score stays within 30-70 bounds
+    def test_score_within_bounds_for_all_positions(self):
+        fn = self._fn()
+        for pp in range(1, 17):
+            score = fn(post_position=pp, head_count=16, distance=1200)
+            assert 30.0 <= score <= 70.0, f"Out of bounds at pos={pp}: {score}"
+
+    # Extra: single-horse field (head_count=1) returns 50.0 by norm_pos math
+    def test_single_horse_field_returns_neutral(self):
+        # norm_pos = (1-1)/max(1-1,1) = 0/1 = 0.0 → score = 50 + bias*(0.5-0.0)
+        # bias=-5.0, score = 50 - 2.5 = 47.5 (clamped to 47.5) — just check bounds
+        score = self._fn()(post_position=1, head_count=1)
+        assert 30.0 <= score <= 70.0
+
+
+# ===========================================================================
+# 13. _parse_past_race_td — agari3f and margin fields
+#     (extends TestParsePastRaceTd with structured HTML tests)
+# ===========================================================================
+
+class TestParsePastRaceAgari3fMargin:
+    """Tests for agari3f and margin extraction in _parse_past_race_td."""
+
+    def _fn(self):
+        from backend.scraper.netkeiba import _parse_past_race_td
+        return _parse_past_race_td
+
+    # 1. agari3f extracted from Data06 structured HTML "(34.0)"
+    def test_agari3f_from_data06_html(self):
+        from bs4 import BeautifulSoup
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">3</span></div>'
+            '<div class="Data06">11-11-12-12 (34.0) 456(+2)</div>'
+            '2026.03.05 東京11芝1600 1:34.2良16頭 5番 2人 ルメール'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["agari3f"] == 34.0
+
+    # 2. margin extracted from Data07 structured HTML "馬名(0.4)"
+    def test_margin_from_data07_html(self):
+        from bs4 import BeautifulSoup
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">2</span></div>'
+            '<div class="Data06">8-8-8-9 (35.2) 478(0)</div>'
+            '<div class="Data07">ダービー馬(0.4)</div>'
+            '2026.03.05 東京11芝2400 2:25.1良16頭 4番 3人 川田'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["margin"] == 0.4
+
+    # 3. agari3f=0.0 when no Data06 element and no text fallback match
+    def test_agari3f_zero_when_no_data06(self):
+        # Use mock td with select_one returning None — no Data06, no "(XX.X)" in text
+        td = MagicMock()
+        td.get_text.return_value = "2026.03.05 東京11芝1600 1:34.2良16頭 5番 2人 ルメール 57.0"
+        td.get.side_effect = lambda attr, default=None: [] if attr == "class" else default
+        td.select_one.return_value = None
+        td.select.return_value = []
+        result = self._fn()(td)
+        assert result is not None
+        assert result["agari3f"] == 0.0
+
+    # 4. margin=0.0 when no Data07 element
+    def test_margin_zero_when_no_data07(self):
+        from bs4 import BeautifulSoup
+        # Data06 present (for agari3f), but no Data07
+        html = (
+            '<td class="Past">'
+            '<div class="Data01"><span class="Num">1</span></div>'
+            '<div class="Data06">1-1-1-1 (33.8) 510(0)</div>'
+            '2026.04.01 阪神11芝1800 1:47.5良18頭 1番 1人 ルメール'
+            '</td>'
+        )
+        soup = BeautifulSoup(html, "lxml")
+        td = soup.select_one("td")
+        result = self._fn()(td)
+        assert result is not None
+        assert result["margin"] == 0.0

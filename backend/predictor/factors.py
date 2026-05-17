@@ -873,11 +873,13 @@ def calc_draw_bias(post_position: int, head_count: int, surface: str = "",
     norm_pos = (post_position - 1) / max(head_count - 1, 1)
 
     # Default: slight inner bias (JRA average)
-    bias = -5.0  # Inner advantage
+    # bias > 0 means inner advantage: inner (norm_pos=0) gets +bias*0.5,
+    # outer (norm_pos=1) gets -bias*0.5.
+    bias = 5.0  # Inner advantage
 
     # Sprint races (≤1400m): stronger inner bias
     if distance > 0 and distance <= 1400:
-        bias = -10.0
+        bias = 10.0
     # Long races (≥2400m): less bias or slight outer advantage
     elif distance > 0 and distance >= 2400:
         bias = 0.0
