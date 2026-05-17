@@ -82,7 +82,7 @@ const _CLOUD_API = "https://keiba-oracle-api-production.up.railway.app/api";
 const API = _isLocal ? "http://localhost:8000/api" : _isVercel ? "/api" : _CLOUD_API;
 let weekData=[], activeDate="", scheduleCache={};
 
-function showList(){document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
+function showList(){_stopOddsPolling();document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
 function showDetail(raceId){document.getElementById("page-list").classList.remove("active");document.getElementById("page-detail").classList.add("active");window.scrollTo(0,0);loadRaceDetail(raceId);}
 
 // Reload latest state: clear all caches and re-init from the list page
@@ -352,8 +352,8 @@ async function loadRaceDetail(id){
           const pb=document.getElementById("detail-pattern");
           if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
           renderBets();
-          // Fetch live odds in background and update display
-          if(API){_refreshLiveOdds(id);}
+          // Start live odds polling (60s interval) while on detail page
+          if(API){_startOddsPolling(id);}
           return;
         }
       }
@@ -392,8 +392,24 @@ async function loadRaceDetail(id){
   }catch(e){el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;}
 }
 
+let _oddsTimer=null;
+let _currentOddsRaceId=null;
+
+function _startOddsPolling(raceId){
+  _stopOddsPolling();
+  _currentOddsRaceId=raceId;
+  _refreshLiveOdds(raceId);
+  // Poll every 60 seconds while on detail page
+  _oddsTimer=setInterval(()=>_refreshLiveOdds(raceId),60000);
+}
+
+function _stopOddsPolling(){
+  if(_oddsTimer){clearInterval(_oddsTimer);_oddsTimer=null;}
+  _currentOddsRaceId=null;
+}
+
 async function _refreshLiveOdds(raceId){
-  // Fetch latest odds from API and update entry display without full reload
+  if(_currentOddsRaceId!==raceId)return;
   try{
     const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});
     if(!r.ok)return;
@@ -408,7 +424,6 @@ async function _refreshLiveOdds(raceId){
       }
     }
     if(updated>0){
-      // Re-render the race card table with fresh odds
       renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
       renderBets();
     }
