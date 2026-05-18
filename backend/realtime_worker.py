@@ -419,9 +419,14 @@ class RealtimeWorker:
                     logger.info("All races finished. Exiting.")
                     break
 
-            # Sleep interval: 60s if any race within 20min, else 300s
+            # Sleep interval: 30s if <7min (final odds), 60s if <20min, else 300s
             min_mins = min((self.get_minutes_to_post(r) for r in race_ids if self.get_minutes_to_post(r) > -10), default=999)
-            interval = 60 if min_mins <= 20 else 300
+            if min_mins <= 7:
+                interval = 30
+            elif min_mins <= 20:
+                interval = 60
+            else:
+                interval = 300
             logger.info("  Next check in %ds (nearest race: %.0fmin)\n", interval, min_mins)
             time.sleep(interval)
 
