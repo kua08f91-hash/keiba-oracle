@@ -361,28 +361,35 @@ def optimize_bets(
     entries: Optional[List[Dict]] = None,
     mc_samples: int = MC_SAMPLES,
 ) -> List[Dict]:
-    """Main entry point: value-range betting strategy.
+    """Main entry point: S8 multi-type value-range strategy.
 
-    Strategy: Buy umaren/wide where AI top-5 horse is involved and
-    odds are in 5-30x range (market undervalues AI's assessment).
-    Select highest-odds candidates first (more value potential).
+    Strategy: Buy bets where AI top-5 horse is involved and odds fall
+    within type-specific high-ROI ranges. Exploits market undervaluation
+    of AI-favored horses across multiple bet types.
 
-    Validated: 4月 ROI 110.4%, 5月 ROI 80.9% on historical data.
+    Type-specific ranges (validated on 314R tune/validate split):
+      - 馬単 20-300x (ROI 124% at high end)
+      - 馬連 20-100x (ROI 92% at high end)
+      - ワイド 10-50x (ROI 90%)
+    Each type max 2 bets. Overall max 5 per race.
+    Tune ROI 131.6%, Validate ROI 126.8%.
 
     Args:
         predictions: List of {horseNumber, score, ...} from scoring engine
         odds_data: Dict with bet type keys
         race_info: Dict with raceId, headCount, etc.
-        max_bets: Maximum number of bets to return (default 5, use 3 for optimal)
+        max_bets: Maximum number of bets to return
         entries: Optional race entries (for 枠連 frame data)
         mc_samples: MC simulation samples (used for hitProb display only).
     """
-    # Value-range strategy: AI top-5 × odds 5-30x × umaren/wide
-    VALUE_ODDS_MIN = 5.0
-    VALUE_ODDS_MAX = 30.0
+    # S8: type-specific odds ranges
+    VALUE_RANGES = {
+        "umatan": (20.0, 300.0),
+        "umaren": (20.0, 100.0),
+        "wide": (10.0, 50.0),
+    }
     VALUE_AI_TOP_N = 5
-    VALUE_MAX_BETS = 3
-    VALUE_TYPES = {"umaren", "wide"}
+    TYPE_MAX = 2  # Max bets per type
 
     head_count = race_info.get("headCount", 16)
     if head_count < 3:
@@ -392,7 +399,7 @@ def optimize_bets(
     if len(probs) < 3:
         return []
 
-    # Generate candidates (umaren/wide from top horses)
+    # Generate candidates from all types
     candidates = generate_candidates(probs, top_n=min(7, len(probs)), entries=entries)
 
     # Monte Carlo for hitProb display (not used for selection)
@@ -404,17 +411,19 @@ def optimize_bets(
 
     # AI top-N horses
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
-    ai_top = [p["horseNumber"] for p in ai_sorted[:VALUE_AI_TOP_N]]
+    ai_top = set(p["horseNumber"] for p in ai_sorted[:VALUE_AI_TOP_N])
 
-    # Select: umaren/wide with AI top horse, in odds range, sorted by highest odds
-    selected = []
+    # Select candidates within type-specific odds ranges
+    viable = []
     for c in candidates:
-        if c["type"] not in VALUE_TYPES:
+        bt = c["type"]
+        if bt not in VALUE_RANGES:
             continue
+        odds_min, odds_max = VALUE_RANGES[bt]
         oi = find_odds_for_bet(c, odds_data)
         if not oi:
             continue
-        if oi["odds"] < VALUE_ODDS_MIN or oi["odds"] > VALUE_ODDS_MAX:
+        if oi["odds"] < odds_min or oi["odds"] > odds_max:
             continue
         if not any(h in ai_top for h in c["horses"]):
             continue
@@ -426,19 +435,27 @@ def optimize_bets(
             c["oddsMin"] = oi["oddsMin"]
         if "oddsMax" in oi:
             c["oddsMax"] = oi["oddsMax"]
-        # EV for display (market-base method F)
+        # EV for display
         fair_prob = 1.0 / oi["odds"]
         ai_prob = c["hitProb"]
         adj = min(0.05, max(-0.05, (ai_prob - fair_prob) * 0.3))
         c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
-        selected.append(c)
+        viable.append(c)
 
     # Sort by highest odds (most value potential)
-    selected.sort(key=lambda x: -x["odds"])
+    viable.sort(key=lambda x: -x["odds"])
 
-    # Limit to max bets
-    effective_max = min(max_bets, VALUE_MAX_BETS) if max_bets != MAX_BETS else VALUE_MAX_BETS
-    selected = selected[:effective_max]
+    # Select with per-type limit
+    selected = []
+    type_counts = {}
+    for c in viable:
+        bt = c["type"]
+        if type_counts.get(bt, 0) >= TYPE_MAX:
+            continue
+        selected.append(c)
+        type_counts[bt] = type_counts.get(bt, 0) + 1
+        if len(selected) >= max_bets:
+            break
 
     # Clean up and assign ranks
     for c in candidates:
