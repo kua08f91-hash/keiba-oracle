@@ -387,7 +387,7 @@ class RealtimeWorker:
 
                 any_active = True
 
-                if mins <= 10 and not self.is_frozen(rid):
+                if mins <= 7 and not self.is_frozen(rid):
                     # Freeze point — final odds update then lock
                     logger.info("%s%2dR: Final update + FREEZE (%.0fmin)", course, rnum, mins)
                     win_odds = self.fetch_win_odds(rid)

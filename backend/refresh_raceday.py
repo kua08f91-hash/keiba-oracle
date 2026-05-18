@@ -112,9 +112,9 @@ def main():
         return
 
     # Two windows:
-    #   Wide window (20-10 min before post): detected for 1-min rapid refresh
-    #   Predictions are FROZEN at 10 min before post — no updates after that
-    wide_start = now + timedelta(minutes=10)
+    #   Wide window (20-7 min before post): detected for 1-min rapid refresh
+    #   Predictions are FROZEN at 7 min before post — no updates after that
+    wide_start = now + timedelta(minutes=7)
     wide_end = now + timedelta(minutes=20)
     refreshed = 0
 
@@ -139,8 +139,8 @@ def main():
                 if not start_dt or not race_id:
                     continue
                 mins_left = int((start_dt - tick_now).total_seconds() / 60)
-                if mins_left < 10:
-                    print(f"    FROZEN (< 10 min to post) - skipping")
+                if mins_left < 7:
+                    print(f"    FROZEN (< 7 min to post) - skipping")
                     continue
 
                 print(f"\n  [{tick_now.strftime('%H:%M:%S')}] {course_name} {rnum}R - {mins_left}min to post")
