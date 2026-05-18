@@ -1404,6 +1404,629 @@ class TestHonmeiNagashiAnchor:
 
 
 # ---------------------------------------------------------------------------
+# S8 MULTI-TYPE VALUE-RANGE STRATEGY TESTS
+# ---------------------------------------------------------------------------
+
+
+class TestS8Strategy:
+    """TDD tests for the S8 multi-type value-range strategy in optimize_bets().
+
+    Strategy constants (from implementation):
+      VALUE_RANGES = {"umatan": (20.0, 300.0), "umaren": (20.0, 100.0), "wide": (10.0, 50.0)}
+      VALUE_AI_TOP_N = 5   — only bets involving AI top-5 horses qualify
+      TYPE_MAX = 2          — max bets per type
+      max_bets = 5          — overall maximum (default)
+
+    Selection pipeline:
+      1. Only umatan / umaren / wide types are considered.
+      2. Real odds (from odds_data) must exist — no estimated odds.
+      3. Odds must fall inside the type-specific range (inclusive boundaries excluded below).
+      4. At least one horse in the bet must be in the AI top-5 by score.
+      5. Per-type cap: 2 bets.
+      6. Overall cap: max_bets (default 5).
+      7. Final output sorted highest odds first.
+    """
+
+    # ── Fixture helpers ───────────────────────────────────────────────────────
+
+    def _make_predictions(self, n: int = 8) -> list:
+        """Build n predictions with clearly separated scores so AI top-5 is deterministic."""
+        return [
+            {"horseNumber": i, "score": max(5, 90 - i * 8), "isScratched": False}
+            for i in range(1, n + 1)
+        ]
+        # scores: 1→82, 2→74, 3→66, 4→58, 5→50, 6→42, 7→34, 8→26
+        # AI top-5 = horses 1-5.
+
+    def _race_info(self, head_count: int = 10) -> dict:
+        return {"raceId": "202606030210", "headCount": head_count}
+
+    def _odds_entry(self, horses: list, odds: float) -> dict:
+        return {"horses": horses, "odds": odds, "payout": int(odds * 100)}
+
+    # ── 1. Only umatan / umaren / wide types are returned ────────────────────
+
+    def test_only_allowed_types_returned(self):
+        """No tansho, fukusho, sanrentan, sanrenpuku, or wakuren should appear."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            # Provide qualifying odds for every non-allowed type to prove they are rejected.
+            "tansho":    [self._odds_entry([1], 25.0)],
+            "fukusho":   [self._odds_entry([1], 15.0)],
+            "wakuren":   [self._odds_entry([1, 2], 30.0)],
+            "sanrenpuku":[self._odds_entry([1, 2, 3], 45.0)],
+            "sanrentan": [self._odds_entry([1, 2, 3], 120.0)],
+            # Qualifying entries for the three allowed types:
+            "umatan":    [self._odds_entry([1, 2], 50.0)],
+            "umaren":    [self._odds_entry([1, 2], 30.0)],
+            "wide":      [self._odds_entry([1, 2], 20.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        for bet in bets:
+            assert bet["type"] in {"umatan", "umaren", "wide"}, (
+                f"Disallowed type returned: {bet['type']}"
+            )
+
+    def test_tansho_explicitly_absent(self):
+        """単勝 (tansho) must never appear even when it has excellent odds."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "tansho": [self._odds_entry([1], 50.0)],
+            "umatan": [self._odds_entry([1, 2], 50.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert all(b["type"] != "tansho" for b in bets)
+
+    def test_sanrentan_explicitly_absent(self):
+        """3連単 must never appear even when in valid odds range."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "sanrentan": [self._odds_entry([1, 2, 3], 100.0)],
+            "wide":      [self._odds_entry([1, 2], 20.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert all(b["type"] != "sanrentan" for b in bets)
+
+    # ── 2. umatan odds range 20–300x ─────────────────────────────────────────
+
+    def test_umatan_within_range_is_included(self):
+        """A umatan bet at exactly the midpoint (160x) must be selected."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 160.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umatan_bets = [b for b in bets if b["type"] == "umatan"]
+        assert len(umatan_bets) >= 1, "umatan at 160x (in range) must be selected"
+
+    def test_umatan_below_min_rejected(self):
+        """umatan below 20x must be rejected (odds=19.9)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 19.9)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "umatan" for b in bets), (
+            "umatan at 19.9x (below 20x minimum) must be excluded"
+        )
+
+    def test_umatan_at_exact_lower_bound_rejected(self):
+        """umatan at exactly 19.99x — below the 20x threshold — must be excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 19.99)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "umatan" for b in bets)
+
+    def test_umatan_above_max_rejected(self):
+        """umatan above 300x must be rejected (odds=300.1)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 300.1)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "umatan" for b in bets), (
+            "umatan at 300.1x (above 300x maximum) must be excluded"
+        )
+
+    def test_umatan_at_lower_boundary_included(self):
+        """umatan at exactly 20.0x must be included (boundary is inclusive)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 20.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umatan_bets = [b for b in bets if b["type"] == "umatan"]
+        assert len(umatan_bets) >= 1, "umatan at exactly 20.0x must be included"
+
+    def test_umatan_at_upper_boundary_included(self):
+        """umatan at exactly 300.0x must be included (boundary is inclusive)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umatan": [self._odds_entry([1, 2], 300.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umatan_bets = [b for b in bets if b["type"] == "umatan"]
+        assert len(umatan_bets) >= 1, "umatan at exactly 300.0x must be included"
+
+    # ── 3. umaren odds range 20–100x ─────────────────────────────────────────
+
+    def test_umaren_within_range_is_included(self):
+        """umaren at 50x (in range 20-100) must be selected."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umaren": [self._odds_entry([1, 2], 50.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "umaren" for b in bets), "umaren at 50x must be selected"
+
+    def test_umaren_below_20_rejected(self):
+        """umaren at 19x (below 20x minimum) must be excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umaren": [self._odds_entry([1, 2], 19.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "umaren" for b in bets), (
+            "umaren at 19x (below range) must be excluded"
+        )
+
+    def test_umaren_above_100_rejected(self):
+        """umaren at 100.1x (above 100x maximum) must be excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umaren": [self._odds_entry([1, 2], 100.1)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "umaren" for b in bets), (
+            "umaren at 100.1x (above range) must be excluded"
+        )
+
+    def test_umaren_at_lower_boundary_20_included(self):
+        """umaren at exactly 20.0x must be included."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umaren": [self._odds_entry([1, 2], 20.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "umaren" for b in bets)
+
+    def test_umaren_at_upper_boundary_100_included(self):
+        """umaren at exactly 100.0x must be included."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"umaren": [self._odds_entry([1, 2], 100.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "umaren" for b in bets)
+
+    # ── 4. wide odds range 10–50x ────────────────────────────────────────────
+
+    def test_wide_within_range_is_included(self):
+        """wide at 25x (in range 10-50) must be selected."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"wide": [self._odds_entry([1, 2], 25.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "wide" for b in bets), "wide at 25x must be selected"
+
+    def test_wide_below_10_rejected(self):
+        """wide at 9.9x (below 10x minimum) must be excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"wide": [self._odds_entry([1, 2], 9.9)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "wide" for b in bets), (
+            "wide at 9.9x (below range) must be excluded"
+        )
+
+    def test_wide_above_50_rejected(self):
+        """wide at 50.1x (above 50x maximum) must be excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"wide": [self._odds_entry([1, 2], 50.1)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert not any(b["type"] == "wide" for b in bets), (
+            "wide at 50.1x (above range) must be excluded"
+        )
+
+    def test_wide_at_lower_boundary_10_included(self):
+        """wide at exactly 10.0x must be included."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"wide": [self._odds_entry([1, 2], 10.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "wide" for b in bets)
+
+    def test_wide_at_upper_boundary_50_included(self):
+        """wide at exactly 50.0x must be included."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {"wide": [self._odds_entry([1, 2], 50.0)]}
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert any(b["type"] == "wide" for b in bets)
+
+    # ── 5. Bets must involve at least one AI top-5 horse ─────────────────────
+
+    def test_all_bets_involve_ai_top5_horse(self):
+        """Every returned bet must contain at least one horse from AI top-5."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # scores: horse 1=82, 2=74, 3=66, 4=58, 5=50, 6=42, 7=34, 8=26
+        # AI top-5 = {1, 2, 3, 4, 5}
+        ai_top5 = {1, 2, 3, 4, 5}
+        odds_data = {
+            "umatan": [
+                self._odds_entry([1, 2], 50.0),   # top-5 horse 1: qualifies
+                self._odds_entry([6, 7], 80.0),   # no top-5 horse: must be rejected
+            ],
+            "umaren": [
+                self._odds_entry([2, 3], 30.0),   # top-5 horses: qualifies
+                self._odds_entry([7, 8], 35.0),   # no top-5: must be rejected
+            ],
+            "wide": [
+                self._odds_entry([4, 5], 15.0),   # top-5 horses: qualifies
+                self._odds_entry([6, 8], 20.0),   # no top-5: must be rejected
+            ],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        for bet in bets:
+            horse_set = set(bet["horses"])
+            assert horse_set & ai_top5, (
+                f"Bet {bet['type']} horses={bet['horses']} has no AI top-5 horse"
+            )
+
+    def test_bet_with_no_ai_top5_horse_excluded(self):
+        """A bet whose horses are exclusively outside AI top-5 must not be returned."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # Only provide an out-of-top-5 combination (horses 6 & 7)
+        odds_data = {
+            "umaren": [self._odds_entry([6, 7], 30.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert all(b["type"] != "umaren" for b in bets), (
+            "umaren with only non-top-5 horses (6,7) must be excluded"
+        )
+
+    def test_bet_with_one_ai_top5_horse_is_sufficient(self):
+        """A bet containing exactly one AI top-5 horse (paired with a rank-6 horse) qualifies.
+
+        generate_candidates builds from top-7, so [5,6] is a valid candidate.
+        Horse 5 is the 5th-ranked AI horse (inside top-5); horse 6 is rank 6 (outside).
+        The bet qualifies because horse 5 satisfies the AI top-5 membership check.
+        """
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # scores: horse 1=82, 2=74, 3=66, 4=58, 5=50, 6=42 — AI top-5 = {1..5}
+        # [5, 6] is generated by generate_candidates (top-7 used); horse 5 is in top-5.
+        odds_data = {
+            "umaren": [self._odds_entry([5, 6], 30.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umaren_bets = [b for b in bets if b["type"] == "umaren"]
+        assert len(umaren_bets) >= 1, (
+            "umaren [5,6] — horse 5 is in AI top-5, horse 6 is not — must qualify"
+        )
+
+    # ── 6. Max 2 bets per type ───────────────────────────────────────────────
+
+    def test_max_2_bets_per_type_umatan(self):
+        """At most 2 umatan bets may be returned even when more qualify."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [
+                self._odds_entry([1, 2], 50.0),
+                self._odds_entry([2, 1], 60.0),
+                self._odds_entry([1, 3], 80.0),
+                self._odds_entry([3, 1], 90.0),
+                self._odds_entry([2, 3], 100.0),
+            ]
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umatan_count = sum(1 for b in bets if b["type"] == "umatan")
+        assert umatan_count <= 2, f"Expected max 2 umatan, got {umatan_count}"
+
+    def test_max_2_bets_per_type_umaren(self):
+        """At most 2 umaren bets may be returned."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umaren": [
+                self._odds_entry([1, 2], 25.0),
+                self._odds_entry([1, 3], 35.0),
+                self._odds_entry([2, 3], 45.0),
+                self._odds_entry([1, 4], 55.0),
+                self._odds_entry([2, 4], 65.0),
+            ]
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        umaren_count = sum(1 for b in bets if b["type"] == "umaren")
+        assert umaren_count <= 2, f"Expected max 2 umaren, got {umaren_count}"
+
+    def test_max_2_bets_per_type_wide(self):
+        """At most 2 wide bets may be returned."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "wide": [
+                self._odds_entry([1, 2], 12.0),
+                self._odds_entry([1, 3], 18.0),
+                self._odds_entry([2, 3], 22.0),
+                self._odds_entry([1, 4], 30.0),
+                self._odds_entry([2, 4], 40.0),
+            ]
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        wide_count = sum(1 for b in bets if b["type"] == "wide")
+        assert wide_count <= 2, f"Expected max 2 wide, got {wide_count}"
+
+    def test_type_max_is_2_across_all_types(self):
+        """All three types respect TYPE_MAX=2 simultaneously."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # Six entries per type — all qualifying — to stress the per-type cap.
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 50.0 + i * 10) for i in range(6)],
+            "umaren": [self._odds_entry([1, 2 + i], 25.0 + i * 5) for i in range(6)],
+            "wide":   [self._odds_entry([1, 2 + i], 12.0 + i * 4) for i in range(6)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        from collections import Counter
+        type_counts = Counter(b["type"] for b in bets)
+        for bt, count in type_counts.items():
+            assert count <= 2, f"Type {bt} exceeded TYPE_MAX=2 with {count} bets"
+
+    # ── 7. Overall max 5 bets (default max_bets) ─────────────────────────────
+
+    def test_overall_max_5_bets_default(self):
+        """Total number of returned bets must not exceed 5 (default max_bets)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # Provide 10+ qualifying entries spread across all three types.
+        odds_data = {
+            "umatan": [self._odds_entry([1 + i % 2, 2 + i % 3], 30.0 + i * 20)
+                       for i in range(5)],
+            "umaren": [self._odds_entry([1 + i % 3, 2 + i % 4], 25.0 + i * 5)
+                       for i in range(5)],
+            "wide":   [self._odds_entry([1 + i % 4, 2 + i % 3], 12.0 + i * 4)
+                       for i in range(5)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert len(bets) <= 5, f"Expected at most 5 bets, got {len(bets)}"
+
+    def test_custom_max_bets_respected(self):
+        """max_bets=3 must cap the output at 3 even with many qualifying bets."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 50.0), self._odds_entry([2, 1], 70.0)],
+            "umaren": [self._odds_entry([1, 2], 30.0), self._odds_entry([1, 3], 40.0)],
+            "wide":   [self._odds_entry([1, 2], 15.0), self._odds_entry([1, 3], 25.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info(), max_bets=3)
+        assert len(bets) <= 3, f"Expected at most 3 bets with max_bets=3, got {len(bets)}"
+
+    # ── 8. Sorted by highest odds first ──────────────────────────────────────
+
+    def test_sorted_by_highest_odds_first(self):
+        """Returned bets must be ordered descending by odds value."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [
+                self._odds_entry([1, 2], 100.0),
+                self._odds_entry([2, 1], 50.0),
+            ],
+            "umaren": [
+                self._odds_entry([1, 2], 30.0),
+            ],
+            "wide": [
+                self._odds_entry([1, 2], 20.0),
+            ],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        odds_sequence = [b["odds"] for b in bets]
+        assert odds_sequence == sorted(odds_sequence, reverse=True), (
+            f"Bets not sorted highest-odds-first: {odds_sequence}"
+        )
+
+    def test_highest_odds_bet_is_rank_1(self):
+        """The bet with the highest odds receives rank=1."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 250.0)],  # highest
+            "umaren": [self._odds_entry([1, 3], 40.0)],
+            "wide":   [self._odds_entry([2, 3], 20.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert len(bets) >= 1
+        assert bets[0]["rank"] == 1
+        assert bets[0]["odds"] == max(b["odds"] for b in bets), (
+            "Rank-1 bet must have the highest odds"
+        )
+
+    def test_ranks_are_sequential(self):
+        """Ranks must be consecutive integers starting at 1."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 150.0)],
+            "umaren": [self._odds_entry([1, 3], 40.0)],
+            "wide":   [self._odds_entry([2, 3], 15.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        ranks = [b["rank"] for b in bets]
+        assert ranks == list(range(1, len(bets) + 1)), (
+            f"Ranks must be 1..n, got {ranks}"
+        )
+
+    # ── 9. Returns empty list when no odds_data provided ─────────────────────
+
+    def test_empty_odds_data_returns_empty_list(self):
+        """When odds_data is an empty dict, no bets can be selected (no real odds)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        bets = optimize_bets(predictions, {}, self._race_info())
+        assert bets == [], f"Expected empty list with no odds_data, got {bets}"
+
+    def test_none_odds_data_handled_gracefully(self):
+        """When odds_data is None, optimize_bets should return an empty list."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        bets = optimize_bets(predictions, None, self._race_info())
+        assert bets == []
+
+    def test_odds_data_with_only_disallowed_types_returns_empty(self):
+        """If odds_data only contains tansho/fukusho/sanrentan entries, result is empty."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "tansho":    [self._odds_entry([1], 25.0)],
+            "fukusho":   [self._odds_entry([2], 12.0)],
+            "sanrentan": [self._odds_entry([1, 2, 3], 200.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        assert bets == []
+
+    # ── 10. Returns empty list when headCount < 3 ────────────────────────────
+
+    def test_head_count_2_returns_empty(self):
+        """Races with only 2 runners cannot produce valid 2-horse combos — must be empty."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(4)
+        odds_data = {
+            "umaren": [self._odds_entry([1, 2], 30.0)],
+            "wide":   [self._odds_entry([1, 2], 15.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info(head_count=2))
+        assert bets == [], "headCount=2 must produce empty result"
+
+    def test_head_count_1_returns_empty(self):
+        """Single-runner race must return empty."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = [{"horseNumber": 1, "score": 80, "isScratched": False}]
+        bets = optimize_bets(predictions, {}, self._race_info(head_count=1))
+        assert bets == []
+
+    def test_head_count_0_returns_empty(self):
+        """Zero-runner race must return empty."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        bets = optimize_bets([], {}, self._race_info(head_count=0))
+        assert bets == []
+
+    def test_head_count_3_is_minimum_viable(self):
+        """headCount=3 is the minimum that may produce results (not auto-rejected)."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = [
+            {"horseNumber": i, "score": 80 - i * 10, "isScratched": False}
+            for i in range(1, 4)
+        ]
+        odds_data = {"umaren": [self._odds_entry([1, 2], 30.0)]}
+        # Should not raise and should not be rejected by the headCount < 3 guard.
+        bets = optimize_bets(predictions, odds_data, self._race_info(head_count=3))
+        assert isinstance(bets, list)
+
+    # ── 11. Bets without real odds are excluded ──────────────────────────────
+
+    def test_bets_without_real_odds_excluded(self):
+        """Candidates that have no matching entry in odds_data must not appear."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # Provide odds only for horse pair [1,2], not for [1,3] or others.
+        odds_data = {
+            "umaren": [self._odds_entry([1, 2], 30.0)],
+            # Deliberately omit [1,3], [2,3], etc.
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        # Any umaren bet that appears must be the [1,2] pair.
+        for bet in bets:
+            if bet["type"] == "umaren":
+                assert set(bet["horses"]) == {1, 2}, (
+                    f"Only umaren [1,2] has real odds; got horses {bet['horses']}"
+                )
+
+    def test_all_returned_bets_have_has_real_odds_true(self):
+        """Every bet in the S8 result must have hasRealOdds=True."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 80.0)],
+            "umaren": [self._odds_entry([1, 3], 35.0)],
+            "wide":   [self._odds_entry([2, 3], 18.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        for bet in bets:
+            assert bet.get("hasRealOdds") is True, (
+                f"Bet {bet['type']} {bet['horses']} missing hasRealOdds=True"
+            )
+
+    def test_odds_data_missing_key_for_type_treated_as_no_real_odds(self):
+        """Missing key in odds_data for a type is treated as no real odds for that type."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # Only umaten odds — umaren and wide have no entries at all.
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 60.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        for bet in bets:
+            assert bet["type"] == "umatan", (
+                f"Only umatan has real odds; unexpected type {bet['type']}"
+            )
+
+    # ── Integration: mixed qualifying / non-qualifying entries ───────────────
+
+    def test_mixed_odds_only_qualifying_entries_returned(self):
+        """Only bets satisfying every filter simultaneously are returned."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        # AI top-5 = horses 1-5.
+        odds_data = {
+            "umatan": [
+                self._odds_entry([1, 2], 250.0),   # in range, top-5 ✓
+                self._odds_entry([1, 2], 15.0),    # below range ✗
+                self._odds_entry([6, 7], 80.0),    # no top-5 ✗
+                self._odds_entry([1, 2], 310.0),   # above range ✗
+            ],
+            "umaren": [
+                self._odds_entry([3, 4], 45.0),    # in range, top-5 ✓
+                self._odds_entry([7, 8], 50.0),    # no top-5 ✗
+            ],
+            "wide": [
+                self._odds_entry([4, 5], 30.0),    # in range, top-5 ✓
+                self._odds_entry([1, 2], 5.0),     # below range ✗
+                self._odds_entry([2, 3], 55.0),    # above range ✗
+            ],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        # All returned bets must pass every filter.
+        ai_top5 = {1, 2, 3, 4, 5}
+        value_ranges = {"umatan": (20.0, 300.0), "umaren": (20.0, 100.0), "wide": (10.0, 50.0)}
+        for bet in bets:
+            bt = bet["type"]
+            assert bt in value_ranges, f"Disallowed type: {bt}"
+            lo, hi = value_ranges[bt]
+            assert lo <= bet["odds"] <= hi, (
+                f"{bt} odds {bet['odds']} outside range [{lo}, {hi}]"
+            )
+            assert set(bet["horses"]) & ai_top5, (
+                f"{bt} {bet['horses']} has no AI top-5 horse"
+            )
+
+    def test_result_is_list_of_dicts_with_required_fields(self):
+        """Every bet dict must contain the fields required by the API."""
+        from backend.predictor.bet_optimizer import optimize_bets
+        predictions = self._make_predictions(8)
+        odds_data = {
+            "umatan": [self._odds_entry([1, 2], 80.0)],
+            "umaren": [self._odds_entry([1, 3], 30.0)],
+            "wide":   [self._odds_entry([2, 3], 20.0)],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info())
+        required_fields = {"type", "typeLabel", "horses", "ev", "hitProb", "rank",
+                           "odds", "hasRealOdds"}
+        for bet in bets:
+            missing = required_fields - set(bet.keys())
+            assert not missing, f"Bet is missing required fields: {missing}"
+
+
+# ---------------------------------------------------------------------------
 # TestPopularityExpansion — TDD tests for ◎流し拡張 (Change 1)
 # ---------------------------------------------------------------------------
 
