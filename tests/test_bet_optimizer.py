@@ -2398,3 +2398,142 @@ class TestEstimateThreshold:
         assert 2 not in tansho_horse_nums, (
             "Horse with odds=None (2) must not appear in tansho estimates."
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests for the 7-minute freeze threshold and 30/60/300s update intervals
+# (Change 1: freeze at 7 min; Change 2: 30s interval when <7 min to post)
+# ---------------------------------------------------------------------------
+
+class TestUpdateIntervals:
+    """Unit tests for realtime_worker interval logic and freeze constants.
+
+    These tests are intentionally free of DB / network dependencies.
+    They import only module-level symbols and a pure helper function.
+    """
+
+    # ------------------------------------------------------------------
+    # Test 1 – freeze threshold constant is 7
+    # ------------------------------------------------------------------
+
+    def test_freeze_threshold_constant_is_7(self):
+        """FREEZE_THRESHOLD_MINS exported from realtime_worker must equal 7."""
+        from backend.realtime_worker import FREEZE_THRESHOLD_MINS
+        assert FREEZE_THRESHOLD_MINS == 7, (
+            f"Expected FREEZE_THRESHOLD_MINS=7 (changed from 10), got {FREEZE_THRESHOLD_MINS}"
+        )
+
+    # ------------------------------------------------------------------
+    # Tests 2-4 – interval returned for each regime
+    # ------------------------------------------------------------------
+
+    def test_interval_is_30s_when_min_mins_below_7(self):
+        """compute_update_interval returns 30 when min_mins is well below 7."""
+        from backend.realtime_worker import compute_update_interval
+        assert compute_update_interval(3.0) == 30, (
+            "3 min to post is inside the <7-min window; interval must be 30s"
+        )
+
+    def test_interval_is_30s_when_min_mins_is_0(self):
+        """compute_update_interval returns 30 at 0 minutes (imminent start)."""
+        from backend.realtime_worker import compute_update_interval
+        assert compute_update_interval(0.0) == 30
+
+    def test_interval_is_60s_when_min_mins_in_mid_range(self):
+        """compute_update_interval returns 60 for a value between 7 and 20."""
+        from backend.realtime_worker import compute_update_interval
+        assert compute_update_interval(15.0) == 60, (
+            "15 min to post is in the 7-20 min window; interval must be 60s"
+        )
+
+    def test_interval_is_300s_when_min_mins_above_20(self):
+        """compute_update_interval returns 300 when race is more than 20 min away."""
+        from backend.realtime_worker import compute_update_interval
+        assert compute_update_interval(25.0) == 300, (
+            "25 min to post is outside any rapid-refresh window; interval must be 300s"
+        )
+
+    def test_interval_is_300s_for_very_large_value(self):
+        """compute_update_interval returns 300 for the sentinel value 999 (no race)."""
+        from backend.realtime_worker import compute_update_interval
+        assert compute_update_interval(999) == 300
+
+    # ------------------------------------------------------------------
+    # Tests 5-6 – boundary values (exact threshold edges)
+    # ------------------------------------------------------------------
+
+    def test_boundary_exactly_7_minutes_gives_30s(self):
+        """Boundary: min_mins == 7 must fall into the <=7 branch (30s), not the <=20 branch."""
+        from backend.realtime_worker import compute_update_interval
+        result = compute_update_interval(7)
+        assert result == 30, (
+            f"At exactly 7 min the condition 'min_mins <= 7' is True; "
+            f"expected interval=30, got {result}"
+        )
+
+    def test_boundary_exactly_20_minutes_gives_60s(self):
+        """Boundary: min_mins == 20 must fall into the <=20 branch (60s), not the 300s branch."""
+        from backend.realtime_worker import compute_update_interval
+        result = compute_update_interval(20)
+        assert result == 60, (
+            f"At exactly 20 min the condition 'min_mins <= 20' is True; "
+            f"expected interval=60, got {result}"
+        )
+
+    def test_boundary_just_above_7_minutes_gives_60s(self):
+        """Just above 7 min (7.01) must NOT trigger the 30s branch."""
+        from backend.realtime_worker import compute_update_interval
+        result = compute_update_interval(7.01)
+        assert result == 60, (
+            f"7.01 min is above the 7-min threshold; expected interval=60, got {result}"
+        )
+
+    def test_boundary_just_above_20_minutes_gives_300s(self):
+        """Just above 20 min (20.01) must NOT trigger the 60s branch."""
+        from backend.realtime_worker import compute_update_interval
+        result = compute_update_interval(20.01)
+        assert result == 300, (
+            f"20.01 min is above the 20-min threshold; expected interval=300, got {result}"
+        )
+
+    # ------------------------------------------------------------------
+    # Test 7 – refresh_raceday freeze threshold is 7 (not 10)
+    # ------------------------------------------------------------------
+
+    def test_refresh_raceday_freeze_threshold_is_7_not_10(self):
+        """Verify that refresh_raceday.py uses 7 as the freeze threshold.
+
+        Strategy: parse the source file with the `ast` module and inspect all
+        Compare nodes.  The constant 10 must NOT appear in any comparison whose
+        left-hand side corresponds to `mins_left`, and the constant 7 MUST
+        appear in at least one such comparison.
+        """
+        import ast
+        import inspect
+        import backend.refresh_raceday as rrd
+
+        source = inspect.getsource(rrd)
+        tree = ast.parse(source)
+
+        freeze_comparisons: list[int] = []
+
+        class _FreezeVisitor(ast.NodeVisitor):
+            """Collect integer constants from `if mins_left < N` style comparisons."""
+            def visit_Compare(self, node: ast.Compare) -> None:  # noqa: N802
+                # Look for `mins_left < N` or `mins_left <= N`
+                if isinstance(node.left, ast.Name) and node.left.id == "mins_left":
+                    for comparator in node.comparators:
+                        if isinstance(comparator, ast.Constant) and isinstance(comparator.value, int):
+                            freeze_comparisons.append(comparator.value)
+                self.generic_visit(node)
+
+        _FreezeVisitor().visit(tree)
+
+        assert 7 in freeze_comparisons, (
+            f"refresh_raceday.py must compare mins_left against 7 (the freeze threshold). "
+            f"Found comparisons: {freeze_comparisons}"
+        )
+        assert 10 not in freeze_comparisons, (
+            f"refresh_raceday.py still references the OLD threshold of 10 min. "
+            f"Found comparisons: {freeze_comparisons}"
+        )

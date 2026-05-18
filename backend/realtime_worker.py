@@ -431,6 +431,25 @@ class RealtimeWorker:
             time.sleep(interval)
 
 
+FREEZE_THRESHOLD_MINS = 7  # predictions are locked at this many minutes before post
+
+
+def compute_update_interval(min_mins: float) -> int:
+    """Return the sleep interval (seconds) based on minutes to nearest race.
+
+    Rules (matches the inline logic in RealtimeWorker.run):
+      min_mins <= 7   → 30s  (high-frequency, final odds window)
+      min_mins <= 20  → 60s  (pre-race rapid refresh)
+      otherwise       → 300s (standard background polling)
+    """
+    if min_mins <= 7:
+        return 30
+    elif min_mins <= 20:
+        return 60
+    else:
+        return 300
+
+
 def main():
     worker = RealtimeWorker()
     worker.run()
