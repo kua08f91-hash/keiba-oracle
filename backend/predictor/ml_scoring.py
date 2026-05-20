@@ -64,10 +64,12 @@ class MLScoringModel(PredictionModel):
             market_weight = data.get("market_weight")
             expected_keys = set(ANALYTICAL_WEIGHTS.keys())
             saved_keys = set(weights.keys())
-            if saved_keys != expected_keys:
+            # Allow saved to have extra keys (forward compat) but must cover all expected
+            missing = expected_keys - saved_keys
+            if missing:
                 logger.warning(
-                    "Optimized weights factor set mismatch (saved=%d, expected=%d) — using defaults",
-                    len(saved_keys), len(expected_keys)
+                    "Optimized weights missing keys %s (saved=%d, expected=%d) — using defaults",
+                    missing, len(saved_keys), len(expected_keys)
                 )
                 return None, None
             if weights:

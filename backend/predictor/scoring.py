@@ -46,31 +46,31 @@ from .factors import (
 # Optimized via 1,107-race historical data (2023-2024)
 # Constrained: max 30% per factor to prevent overfitting
 ANALYTICAL_WEIGHTS = {
-    # Core track/condition (32%)
-    "trackDirection": 0.1300,       # 13.0% — 右回り/左回り適性
-    "trackCondition": 0.1300,       # 13.0% — 馬場状態適性（BMS対応）
-    "trackSpecific": 0.0500,        # 5.0%  — コース別実績
-    "jockeyAbility": 0.1000,        # 10.0% — 騎手能力
-    # Condition matching (20%)
-    "sameDistance": 0.0700,         # 7.0%  — 同距離実績
-    "sameSurface": 0.0700,          # 7.0%  — 同馬場種実績
-    "sameCondition": 0.0500,        # 5.0%  — 同馬場状態実績
-    "pastPerformance": 0.0500,      # 5.0%  — 過去成績
-    # New — from enhanced scraping (13%)
-    "speedFigure": 0.0500,          # 5.0%  — 上がり/タイム指数（新規）
-    "runningStyle": 0.0400,         # 4.0%  — 脚質一貫性（新規）
-    "daysSinceLast": 0.0200,        # 2.0%  — 休養明け（新規）
-    "weightCarriedTrend": 0.0200,   # 2.0%  — 斤量トレンド（新規）
-    # Supporting factors (15%)
-    "formTrend": 0.0400,            # 4.0%  — 調子トレンド
-    "ageAndSex": 0.0400,            # 4.0%  — 年齢・性別
-    "weightCarried": 0.0300,        # 3.0%  — 斤量絶対値
-    "horseWeightChange": 0.0300,    # 3.0%  — 馬体重変動
-    "trainerAbility": 0.0300,       # 3.0%  — 調教師能力
-    # Pedigree (5%)
-    "courseAffinity": 0.0300,       # 3.0%  — コース適性（血統）
-    "distanceAptitude": 0.0200,     # 2.0%  — 距離適性（血統）
+    "trackDirection": 0.1217,
+    "trackCondition": 0.1217,
+    "trackSpecific": 0.0476,
+    "jockeyAbility": 0.0952,
+    "sameDistance": 0.0635,
+    "sameSurface": 0.0635,
+    "sameCondition": 0.0476,
+    "pastPerformance": 0.0476,
+    "speedFigure": 0.0476,
+    "runningStyle": 0.0370,
+    "daysSinceLast": 0.0212,
+    "weightCarriedTrend": 0.0212,
+    "formTrend": 0.0370,
+    "ageAndSex": 0.0370,
+    "weightCarried": 0.0265,
+    "horseWeightChange": 0.0265,
+    "trainerAbility": 0.0265,
+    "courseAffinity": 0.0265,
+    "distanceAptitude": 0.0212,
+    "agari3f": 0.0212,
+    "marginScore": 0.0212,
+    "drawBias": 0.0212,
 }
+# Defaults (22 keys, sum=1.0). When optimized_weights.json is loaded,
+# its values replace these entirely.
 
 # Final score blend: 85% analytical + 15% market
 MARKET_WEIGHT = 0.15
