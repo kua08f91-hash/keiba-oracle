@@ -2,7 +2,7 @@
 
 ## Project Overview
 JRA (Japan Racing Association) horse racing prediction web app.
-AI scores each horse (0-100) using 11 analytical factors, then a dynamic bet optimizer selects the top 5 bets per race by expected value (EV).
+AI scores each horse (0-100) using 22 analytical factors + market odds (40% weight), then the S8 value-range optimizer selects bets where AI top-5 horses are involved at market-undervalued odds (馬単20-300x, 馬連20-100x, ワイド10-50x).
 
 ## Tech Stack
 - **Frontend**: Next.js 14 + React 18 + TypeScript + Tailwind CSS (port 3000)
@@ -30,8 +30,8 @@ Do NOT use `dict | None` syntax — it causes TypeError on 3.9.
 
 ## Architecture
 
-### Scoring Engine (v5 Rule-Based, 19 Factors — LOCKED with Real-Pipeline Optimized Weights)
-- **Architecture**: v5 WeightedScoringModel with **19 analytical factors** (linear model)
+### Scoring Engine (v5 Rule-Based, 22 Factors + Market 40%)
+- **Architecture**: v5 WeightedScoringModel with **22 analytical factors** (linear model)
 - **Validated performance** (real bet_optimizer pipeline, MC=5000):
   - **2026-04 (最新月): ROI 64.9% → 90.0% (+25.1pt)** — 本番環境に近い最新データ
   - 2023-07 Hold-out: 163.1% → 126.7% (-36.4pt) — 古い有利条件への特化は犠牲
@@ -67,7 +67,7 @@ Do NOT use `dict | None` syntax — it causes TypeError on 3.9.
 従来のtrack系重み（direction/condition/jockey）から、**条件一致性・休養周期・脚質**重視にシフト。
 これは2026年の波乱傾向（1人気勝率25%）への適応。
 
-### v5 19ファクター重み（LOCKED）
+### v5 22ファクター重み（market_weight=40%, optimized_weights.jsonからロード）
 
 **Core track/condition (36%)**:
 | Factor | Weight |
@@ -154,13 +154,13 @@ Do NOT use `dict | None` syntax — it causes TypeError on 3.9.
 - Not used in production predictions; auto_improve retrains weekly for drift detection
 - Retrain: `python -m backend.train_model`
 
-### Dynamic Bet Optimizer
-- Converts AI scores to win probabilities via softmax (temperature=9.5)
-- Race-pattern-based temperature adjustment (本命堅軸×0.85, 混戦模様×1.15)
-- Monte Carlo simulation (5000 samples) for hit probability estimation
-- Calculates EV = P(hit) * odds - 1 for each candidate bet
-- Selects top 5 bets per race by EV with diversification (max 2 of same type)
-- Adapts bet types to each race's characteristics (no fixed strategy)
+### Bet Optimizer (S8 Value-Range Strategy)
+- **Strategy**: Buy where AI top-5 horse is involved at market-undervalued odds
+- **Type-specific odds ranges**: 馬単 20-300x, 馬連 20-100x, ワイド 10-50x
+- Max 2 per type, max 5 per race, highest-odds-first selection
+- Real odds required (no estimated odds)
+- Validated: Tune ROI 131.6%, Validate ROI 126.8% (314R)
+- Monte Carlo simulation (5000 samples) for hitProb display
 
 ### Key API Endpoints
 - `GET /api/racecard/{race_id}` — Race card with AI predictions (DB cache → live fallback)
