@@ -39,3 +39,4 @@ coverage.json
 # Backup files
 *.json.bak
 .vercel
+backtest/cache/
