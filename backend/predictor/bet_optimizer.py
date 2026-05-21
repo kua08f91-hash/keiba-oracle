@@ -423,8 +423,14 @@ def optimize_bets(
         oi = find_odds_for_bet(c, odds_data)
         if not oi:
             continue
-        if oi["odds"] < odds_min or oi["odds"] > odds_max:
-            continue
+        # D1: upper bound is exclusive for umaren/wide (dead zone starts at 30x),
+        # but inclusive for umatan (300x is a valid high-odds bet).
+        if bt in ("umaren", "wide"):
+            if oi["odds"] < odds_min or oi["odds"] >= odds_max:
+                continue
+        else:
+            if oi["odds"] < odds_min or oi["odds"] > odds_max:
+                continue
         if not any(h in ai_top for h in c["horses"]):
             continue
 
