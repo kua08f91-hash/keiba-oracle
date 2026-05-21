@@ -1412,7 +1412,7 @@ class TestS8Strategy:
     """TDD tests for the S8 multi-type value-range strategy in optimize_bets().
 
     Strategy constants (from implementation):
-      VALUE_RANGES = {"umatan": (20.0, 300.0), "umaren": (20.0, 100.0), "wide": (10.0, 50.0)}
+      VALUE_RANGES = {"umatan": (50.0, 300.0), "umaren": (20.0, 30.0), "wide": (10.0, 30.0)}
       VALUE_AI_TOP_N = 5   — only bets involving AI top-5 horses qualify
       TYPE_MAX = 2          — max bets per type
       max_bets = 5          — overall maximum (default)
@@ -1502,17 +1502,17 @@ class TestS8Strategy:
         assert len(umatan_bets) >= 1, "umatan at 160x (in range) must be selected"
 
     def test_umatan_below_min_rejected(self):
-        """umatan below 20x must be rejected (odds=19.9)."""
+        """umatan below 50x must be rejected (odds=19.9)."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 19.9)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert not any(b["type"] == "umatan" for b in bets), (
-            "umatan at 19.9x (below 20x minimum) must be excluded"
+            "umatan at 49.9x (below 50x minimum) must be excluded"
         )
 
     def test_umatan_at_exact_lower_bound_rejected(self):
-        """umatan at exactly 19.99x — below the 20x threshold — must be excluded."""
+        """umatan at exactly 49.99x — below the 50x threshold — must be excluded."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 19.99)]}
@@ -1530,13 +1530,13 @@ class TestS8Strategy:
         )
 
     def test_umatan_at_lower_boundary_included(self):
-        """umatan at exactly 20.0x must be included (boundary is inclusive)."""
+        """umatan at exactly 50.0x must be included (boundary is inclusive)."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"umatan": [self._odds_entry([1, 2], 20.0)]}
+        odds_data = {"umatan": [self._odds_entry([1, 2], 50.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, "umatan at exactly 20.0x must be included"
+        assert len(umatan_bets) >= 1, "umatan at exactly 50.0x must be included"
 
     def test_umatan_at_upper_boundary_included(self):
         """umatan at exactly 300.0x must be included (boundary is inclusive)."""
@@ -1550,10 +1550,10 @@ class TestS8Strategy:
     # ── 3. umaren odds range 20–100x ─────────────────────────────────────────
 
     def test_umaren_within_range_is_included(self):
-        """umaren at 50x (in range 20-100) must be selected."""
+        """umaren at 25x (in range 20-30) must be selected."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"umaren": [self._odds_entry([1, 2], 50.0)]}
+        odds_data = {"umaren": [self._odds_entry([1, 2], 25.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "umaren" for b in bets), "umaren at 50x must be selected"
 
@@ -1568,13 +1568,13 @@ class TestS8Strategy:
         )
 
     def test_umaren_above_100_rejected(self):
-        """umaren at 100.1x (above 100x maximum) must be excluded."""
+        """umaren at 30.1x (above 30x maximum) must be excluded."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umaren": [self._odds_entry([1, 2], 100.1)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert not any(b["type"] == "umaren" for b in bets), (
-            "umaren at 100.1x (above range) must be excluded"
+            "umaren at 30.1x (above range) must be excluded"
         )
 
     def test_umaren_at_lower_boundary_20_included(self):
@@ -1585,18 +1585,18 @@ class TestS8Strategy:
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "umaren" for b in bets)
 
-    def test_umaren_at_upper_boundary_100_included(self):
-        """umaren at exactly 100.0x must be included."""
+    def test_umaren_at_upper_boundary_30_included(self):
+        """umaren at exactly 29.9x must be included."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"umaren": [self._odds_entry([1, 2], 100.0)]}
+        odds_data = {"umaren": [self._odds_entry([1, 2], 29.9)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "umaren" for b in bets)
 
     # ── 4. wide odds range 10–50x ────────────────────────────────────────────
 
     def test_wide_within_range_is_included(self):
-        """wide at 25x (in range 10-50) must be selected."""
+        """wide at 20x (in range 10-30) must be selected."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"wide": [self._odds_entry([1, 2], 25.0)]}
@@ -1614,13 +1614,13 @@ class TestS8Strategy:
         )
 
     def test_wide_above_50_rejected(self):
-        """wide at 50.1x (above 50x maximum) must be excluded."""
+        """wide at 30.1x (above 30x maximum) must be excluded."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"wide": [self._odds_entry([1, 2], 50.1)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert not any(b["type"] == "wide" for b in bets), (
-            "wide at 50.1x (above range) must be excluded"
+            "wide at 30.1x (above range) must be excluded"
         )
 
     def test_wide_at_lower_boundary_10_included(self):
@@ -1631,11 +1631,11 @@ class TestS8Strategy:
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "wide" for b in bets)
 
-    def test_wide_at_upper_boundary_50_included(self):
-        """wide at exactly 50.0x must be included."""
+    def test_wide_at_upper_boundary_30_included(self):
+        """wide at exactly 29.9x must be included."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"wide": [self._odds_entry([1, 2], 50.0)]}
+        odds_data = {"wide": [self._odds_entry([1, 2], 29.9)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "wide" for b in bets)
 

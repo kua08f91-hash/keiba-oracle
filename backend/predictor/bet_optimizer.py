@@ -361,18 +361,17 @@ def optimize_bets(
     entries: Optional[List[Dict]] = None,
     mc_samples: int = MC_SAMPLES,
 ) -> List[Dict]:
-    """Main entry point: S8 multi-type value-range strategy.
+    """Main entry point: D1 bimodal value-range strategy.
 
     Strategy: Buy bets where AI top-5 horse is involved and odds fall
-    within type-specific high-ROI ranges. Exploits market undervaluation
-    of AI-favored horses across multiple bet types.
+    within type-specific high-ROI ranges. Skips 30-50x dead zone.
 
-    Type-specific ranges (validated on 314R tune/validate split):
-      - 馬単 20-300x (ROI 124% at high end)
-      - 馬連 20-100x (ROI 92% at high end)
-      - ワイド 10-50x (ROI 90%)
+    Bimodal ranges (validated on 4,943R 3-way split):
+      - 馬単 50-300x (high-odds, ROI 84-134%)
+      - 馬連 20-30x (low-odds, ROI 77%)
+      - ワイド 10-30x (low-odds, ROI 82%)
     Each type max 2 bets. Overall max 5 per race.
-    Tune ROI 131.6%, Validate ROI 126.8%.
+    Tune 67.1%, Validate 79.0%, Holdout 87.6%, Avg 77.9%.
 
     Args:
         predictions: List of {horseNumber, score, ...} from scoring engine
@@ -382,11 +381,12 @@ def optimize_bets(
         entries: Optional race entries (for 枠連 frame data)
         mc_samples: MC simulation samples (used for hitProb display only).
     """
-    # S8: type-specific odds ranges
+    # D1: bimodal odds ranges (skip 30-50x dead zone)
+    # Validated on 4,943R 3-way split: Avg ROI 77.9% (+7.9pt vs S8)
     VALUE_RANGES = {
-        "umatan": (20.0, 300.0),
-        "umaren": (20.0, 100.0),
-        "wide": (10.0, 50.0),
+        "umatan": (50.0, 300.0),   # High-odds only (ROI 84-134% zone)
+        "umaren": (20.0, 30.0),    # Low-odds only (ROI 77% zone)
+        "wide": (10.0, 30.0),      # Low-odds only (ROI 82% zone)
     }
     VALUE_AI_TOP_N = 5
     TYPE_MAX = 2  # Max bets per type
