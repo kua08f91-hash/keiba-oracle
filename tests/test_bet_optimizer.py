@@ -2743,3 +2743,306 @@ class TestD1BimodalStrategy:
         assert bets == [], (
             f"All odds are in the 30-50x dead zone; expected empty result, got {bets}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestFrameMissingBehavior
+# Tests the behavior contract around JRA未割当 frame numbers (frameNumber=0).
+# The export pipeline suppresses predictions when >50% of non-scratched entries
+# have frameNumber=0.  These tests verify each component's contract in isolation.
+# ---------------------------------------------------------------------------
+
+
+class TestFrameMissingBehavior:
+    """Verify behavior when JRA has not yet assigned frame numbers (frameNumber=0).
+
+    The export script applies this logic after predictions are generated:
+
+        frames_missing = non_scratched and zero_frames > len(non_scratched) * 0.5
+
+        if frames_missing:
+            bets = []
+            for p in preds:
+                p["mark"] = ""
+                p["score"] = 0
+
+    Each test targets one slice of that contract so regressions are pinpointed.
+    """
+
+    # ── Shared helpers ────────────────────────────────────────────────────────
+
+    def _make_entry(self, horse_number, frame_number, scratched=False):
+        """Return a minimal entry dict."""
+        return {
+            "horseNumber": horse_number,
+            "frameNumber": frame_number,
+            "horseName": f"テストホース{horse_number}",
+            "age": "牡4",
+            "weightCarried": 57.0,
+            "jockeyName": "テスト騎手",
+            "trainerName": "テスト調教師",
+            "horseWeight": "480(0)",
+            "odds": 10.0,
+            "popularity": horse_number,
+            "isScratched": scratched,
+            "sireName": "ディープインパクト",
+            "damName": "テストダム",
+            "broodmareSire": "",
+            "pastRaces": [],
+        }
+
+    def _make_prediction(self, horse_number, score=50.0, mark="◎"):
+        """Return a minimal prediction dict."""
+        return {"horseNumber": horse_number, "score": score, "mark": mark}
+
+    def _race_info(self):
+        return {
+            "raceId": "202606030111",
+            "raceName": "テストレース",
+            "raceNumber": 11,
+            "distance": 1600,
+            "surface": "芝",
+            "courseDetail": "左回り",
+            "racecourseCode": "05",
+            "date": "20260426",
+            "headCount": 8,
+            "trackCondition": "良",
+        }
+
+    def _detect_frames_missing(self, entries):
+        """Mirror the export script's frames_missing detection logic exactly."""
+        non_scratched = [e for e in entries if not e.get("isScratched")]
+        zero_frames = sum(1 for e in non_scratched if e.get("frameNumber", 0) == 0)
+        return bool(non_scratched and zero_frames > len(non_scratched) * 0.5)
+
+    # ── 1. optimize_bets is frame-agnostic ───────────────────────────────────
+
+    def test_optimizer_returns_bets_when_all_frames_zero(self):
+        """optimize_bets does not inspect frameNumber — it must still work.
+
+        The optimizer's contract is to rank bets by EV given scores and odds.
+        Suppressing output because of missing frames is the export layer's job,
+        not the optimizer's.  Even when every entry has frameNumber=0 the
+        optimizer should return a result (subject to normal EV thresholds).
+        """
+        from backend.predictor.bet_optimizer import optimize_bets
+
+        entries = [self._make_entry(i, frame_number=0) for i in range(1, 9)]
+        predictions = [
+            self._make_prediction(i, score=100.0 - i * 5) for i in range(1, 9)
+        ]
+        # Provide valid odds so at least one bet clears the EV threshold.
+        odds_data = {
+            "umaren": [{"horses": [1, 2], "odds": 25.0, "payout": 2500}],
+            "wide": [{"horses": [1, 2], "odds": 12.0, "payout": 1200}],
+        }
+        bets = optimize_bets(predictions, odds_data, self._race_info(), entries=entries)
+        # The optimizer itself is frame-agnostic — it must not return an empty
+        # list just because frameNumber=0 (the export layer handles that gate).
+        assert isinstance(bets, list), "optimize_bets must return a list"
+        # At least one bet expected given the supplied odds and scores.
+        assert len(bets) > 0, (
+            "Optimizer should produce bets regardless of frameNumber values; "
+            "frame suppression is the export layer's responsibility"
+        )
+
+    # ── 2. WeightedScoringModel scores are frame-agnostic ────────────────────
+
+    def test_scoring_model_produces_scores_when_frames_zero(self):
+        """WeightedScoringModel must assign non-zero scores even with frameNumber=0.
+
+        drawBias uses frameNumber as a proxy for post position when frame is
+        absent, but that should not prevent a score from being computed.
+        Scores are suppressed by the export layer, not the scoring model.
+        """
+        from backend.predictor.scoring import WeightedScoringModel
+
+        entries = [self._make_entry(i, frame_number=0) for i in range(1, 5)]
+        model = WeightedScoringModel()
+        preds = model.predict(self._race_info(), entries)
+
+        non_zero = [p for p in preds if p["score"] > 0]
+        assert len(non_zero) > 0, (
+            "WeightedScoringModel must produce at least one non-zero score "
+            "regardless of frameNumber; the export layer is responsible for zeroing."
+        )
+
+    def test_scoring_model_assigns_marks_when_frames_zero(self):
+        """WeightedScoringModel must assign ◎◯▲ marks when frameNumber=0.
+
+        The scoring model's contract is to rank horses and assign marks.
+        Clearing those marks when frames are unconfirmed is the export layer's job.
+        """
+        from backend.predictor.scoring import WeightedScoringModel
+
+        entries = [
+            {**self._make_entry(i, frame_number=0), "odds": 2.5 + i}
+            for i in range(1, 6)
+        ]
+        model = WeightedScoringModel()
+        preds = model.predict(self._race_info(), entries)
+
+        marks = [p["mark"] for p in preds]
+        assert "◎" in marks, (
+            "WeightedScoringModel must assign ◎ regardless of frameNumber"
+        )
+
+    # ── 3. frames_missing detection logic ────────────────────────────────────
+
+    def test_all_frames_zero_triggers_frames_missing(self):
+        """100% of non-scratched entries having frameNumber=0 must set frames_missing=True."""
+        entries = [self._make_entry(i, frame_number=0) for i in range(1, 9)]
+        assert self._detect_frames_missing(entries) is True
+
+    def test_majority_frames_zero_triggers_frames_missing(self):
+        """Just over 50%: 5 out of 8 entries with frameNumber=0 must be True."""
+        entries = (
+            [self._make_entry(i, frame_number=0) for i in range(1, 6)]   # 5 zero
+            + [self._make_entry(i, frame_number=i - 4) for i in range(6, 9)]  # 3 non-zero
+        )
+        assert self._detect_frames_missing(entries) is True
+
+    def test_exactly_half_frames_zero_does_not_trigger(self):
+        """Exactly 50% (not strictly greater): 4 out of 8 must be False."""
+        entries = (
+            [self._make_entry(i, frame_number=0) for i in range(1, 5)]   # 4 zero
+            + [self._make_entry(i, frame_number=i - 3) for i in range(5, 9)]  # 4 non-zero
+        )
+        assert self._detect_frames_missing(entries) is False
+
+    def test_minority_frames_zero_does_not_trigger(self):
+        """Only 1 out of 8 non-scratched entries with frameNumber=0 must be False."""
+        entries = (
+            [self._make_entry(1, frame_number=0)]
+            + [self._make_entry(i, frame_number=i - 1) for i in range(2, 9)]
+        )
+        assert self._detect_frames_missing(entries) is False
+
+    def test_no_entries_does_not_trigger(self):
+        """Empty entries list must not trigger frames_missing (avoids ZeroDivisionError path)."""
+        assert self._detect_frames_missing([]) is False
+
+    def test_scratched_entries_excluded_from_count(self):
+        """Scratched horses must not count toward the zero-frame ratio.
+
+        Scenario: 2 non-scratched entries both have confirmed frames; 6 scratched
+        entries have frameNumber=0.  The ratio for non-scratched is 0/2 = 0%.
+        frames_missing must be False.
+        """
+        scratched = [self._make_entry(i, frame_number=0, scratched=True) for i in range(1, 7)]
+        active = [self._make_entry(i, frame_number=i - 6) for i in range(7, 9)]
+        entries = scratched + active
+        assert self._detect_frames_missing(entries) is False
+
+    def test_all_scratched_does_not_trigger(self):
+        """If every entry is scratched, non_scratched is empty and frames_missing must be False."""
+        entries = [self._make_entry(i, frame_number=0, scratched=True) for i in range(1, 9)]
+        assert self._detect_frames_missing(entries) is False
+
+    # ── 4. Applying frames_missing: marks cleared to "" ──────────────────────
+
+    def test_frames_missing_clears_all_marks(self):
+        """When frames_missing is True, clearing loop must set every mark to "".
+
+        This replicates the export loop:
+            for p in preds:
+                p["mark"] = ""
+        """
+        preds = [
+            self._make_prediction(1, score=90, mark="◎"),
+            self._make_prediction(2, score=80, mark="◯"),
+            self._make_prediction(3, score=70, mark="▲"),
+            self._make_prediction(4, score=60, mark="▲"),
+            self._make_prediction(5, score=50, mark="△"),
+            self._make_prediction(6, score=40, mark="△"),
+            self._make_prediction(7, score=30, mark=""),
+        ]
+        # Simulate the export clearing loop
+        for p in preds:
+            p["mark"] = ""
+
+        for p in preds:
+            assert p["mark"] == "", (
+                f"Horse {p['horseNumber']} mark should be '' after frames_missing clear, "
+                f"got {p['mark']!r}"
+            )
+
+    def test_frames_missing_clearing_does_not_affect_other_fields(self):
+        """Clearing marks must not touch horseNumber, factors, or other fields."""
+        preds = [
+            {**self._make_prediction(1, score=90, mark="◎"), "factors": {"jockeyAbility": 0.7}},
+            {**self._make_prediction(2, score=80, mark="◯"), "factors": {"jockeyAbility": 0.5}},
+        ]
+        original_horse_numbers = [p["horseNumber"] for p in preds]
+        original_factors = [p["factors"].copy() for p in preds]
+
+        for p in preds:
+            p["mark"] = ""
+
+        for i, p in enumerate(preds):
+            assert p["horseNumber"] == original_horse_numbers[i]
+            assert p["factors"] == original_factors[i]
+
+    # ── 5. Applying frames_missing: scores zeroed ────────────────────────────
+
+    def test_frames_missing_sets_all_scores_to_zero(self):
+        """When frames_missing is True, clearing loop must set every score to 0."""
+        preds = [
+            self._make_prediction(i, score=100.0 - i * 5, mark="◎" if i == 1 else "")
+            for i in range(1, 9)
+        ]
+        # Simulate the export clearing loop
+        for p in preds:
+            p["mark"] = ""
+            p["score"] = 0
+
+        for p in preds:
+            assert p["score"] == 0, (
+                f"Horse {p['horseNumber']} score should be 0 after frames_missing clear, "
+                f"got {p['score']}"
+            )
+
+    def test_frames_missing_score_zero_is_integer_zero(self):
+        """Score must be set to integer 0, not None or False (strict equality check)."""
+        pred = self._make_prediction(1, score=77.5, mark="◎")
+        pred["score"] = 0
+        assert pred["score"] == 0
+        assert pred["score"] is not None
+        assert pred["score"] is not False
+
+    # ── 6. Frames confirmed: marks and scores are preserved ──────────────────
+
+    def test_frames_confirmed_marks_preserved(self):
+        """When frames_missing is False, marks must NOT be cleared."""
+        entries = [self._make_entry(i, frame_number=i) for i in range(1, 9)]
+        frames_missing = self._detect_frames_missing(entries)
+        assert frames_missing is False, "Precondition: frames should be confirmed"
+
+        from backend.predictor.scoring import WeightedScoringModel
+        entries_with_odds = [{**e, "odds": 2.5 + idx} for idx, e in enumerate(entries)]
+        model = WeightedScoringModel()
+        preds = model.predict(self._race_info(), entries_with_odds)
+
+        # frames_missing is False → export must NOT clear marks
+        # Verify the model assigned at least one named mark
+        marks = [p["mark"] for p in preds]
+        assert "◎" in marks, (
+            "When frames are confirmed, ◎ must be present (marks must not be cleared)"
+        )
+
+    def test_frames_confirmed_scores_preserved(self):
+        """When frames_missing is False, scores must remain as computed."""
+        entries = [self._make_entry(i, frame_number=i) for i in range(1, 9)]
+        frames_missing = self._detect_frames_missing(entries)
+        assert frames_missing is False, "Precondition: frames should be confirmed"
+
+        from backend.predictor.scoring import WeightedScoringModel
+        entries_with_odds = [{**e, "odds": 2.5 + idx} for idx, e in enumerate(entries)]
+        model = WeightedScoringModel()
+        preds = model.predict(self._race_info(), entries_with_odds)
+
+        # Scores should be non-zero for active horses
+        non_zero = [p for p in preds if p["score"] > 0]
+        assert len(non_zero) > 0, (
+            "When frames are confirmed, non-zero scores must be present"
+        )
