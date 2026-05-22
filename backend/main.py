@@ -151,24 +151,27 @@ def get_race_card(race_id: str):
     # Try DB cache first (populated by realtime_worker)
     cached = _get_cached_predictions(race_id)
     if cached and cached["predictions"]:
-        # Inject latest DB odds into entries
+        # Verify DB cache is complete (not partial from failed scrape)
         db = get_session()
         try:
-            for he in db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all():
-                for e in entries:
-                    if e["horseNumber"] == he.horse_number and he.odds:
-                        e["odds"] = he.odds
-                        e["popularity"] = he.popularity
+            db_entries = db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all()
+            if len(db_entries) >= len(entries) * 0.5:
+                # DB cache is complete enough — inject latest odds
+                for he in db_entries:
+                    for e in entries:
+                        if e["horseNumber"] == he.horse_number and he.odds:
+                            e["odds"] = he.odds
+                            e["popularity"] = he.popularity
+                return {
+                    "raceInfo": data["race_info"],
+                    "entries": entries,
+                    "predictions": cached["predictions"],
+                    "frozen": cached["frozen"],
+                    "updatedAt": cached["updated_at"],
+                }
+            # DB cache incomplete — fall through to live computation
         finally:
             db.close()
-
-        return {
-            "raceInfo": data["race_info"],
-            "entries": entries,
-            "predictions": cached["predictions"],
-            "frozen": cached["frozen"],
-            "updatedAt": cached["updated_at"],
-        }
 
     # Fallback: live computation (worker not running or no cache yet)
     # Fetch live odds
