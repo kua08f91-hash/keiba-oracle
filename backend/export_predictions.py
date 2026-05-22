@@ -147,9 +147,12 @@ def main():
                 if live_od:
                     od.update(live_od)  # Real odds override estimates
 
-                # Skip bet generation if frame numbers not confirmed
+                # Skip bet generation and marks if frame numbers not confirmed
                 if frames_missing:
                     bets = []
+                    for p in preds:
+                        p["mark"] = ""
+                        p["score"] = 0
                 else:
                     bets = optimize_bets(preds, od, info, entries=entries)
 
