@@ -162,27 +162,24 @@ def get_race_card(race_id: str):
             data["entries"] = entries
             data["race_info"] = data2["race_info"]
 
-    # Try DB cache first (populated by realtime_worker)
+    # Only use DB cache if frozen (predictions locked before race)
     cached = _get_cached_predictions(race_id)
-    if cached and cached["predictions"]:
-        # Verify DB cache is complete (not partial from failed scrape)
+    if cached and cached.get("frozen"):
         db = get_session()
         try:
             db_entries = db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all()
-            if len(db_entries) >= len(entries) * 0.5:
-                # DB cache is complete enough — inject latest odds
-                for he in db_entries:
-                    for e in entries:
-                        if e["horseNumber"] == he.horse_number and he.odds:
-                            e["odds"] = he.odds
-                            e["popularity"] = he.popularity
-                return {
-                    "raceInfo": data["race_info"],
-                    "entries": entries,
-                    "predictions": cached["predictions"],
-                    "frozen": cached["frozen"],
-                    "updatedAt": cached["updated_at"],
-                }
+            for he in db_entries:
+                for e in entries:
+                    if e["horseNumber"] == he.horse_number and he.odds:
+                        e["odds"] = he.odds
+                        e["popularity"] = he.popularity
+            return {
+                "raceInfo": data["race_info"],
+                "entries": entries,
+                "predictions": cached["predictions"],
+                "frozen": True,
+                "updatedAt": cached["updated_at"],
+            }
             # DB cache incomplete — fall through to live computation
         finally:
             db.close()
@@ -257,19 +254,19 @@ def get_optimized_bets(race_id: str):
     if not race_id or len(race_id) < 10:
         raise HTTPException(status_code=400, detail="Invalid race ID.")
 
-    # Try DB cache first
+    # Only use DB cache if frozen (predictions locked before race)
     cached = _get_cached_predictions(race_id)
-    if cached and cached["bets"]:
+    if cached and cached.get("frozen"):
         return {
             "bets": cached["bets"],
             "longshot": cached["longshot"],
             "pattern": cached["pattern"],
             "raceId": race_id,
-            "frozen": cached["frozen"],
+            "frozen": True,
             "updatedAt": cached["updated_at"],
         }
 
-    # Fallback: live computation
+    # Live computation with real-time odds
     data = fetch_race_card(race_id)
     if not data:
         raise HTTPException(status_code=404, detail="Race not found.")
