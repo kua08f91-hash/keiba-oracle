@@ -123,6 +123,11 @@ def main():
                         info = data2["race_info"]
                         data = data2
 
+                # Check if frame numbers are still missing after re-fetch
+                non_scratched2 = [e for e in entries if not e.get("isScratched")]
+                zero_frames2 = sum(1 for e in non_scratched2 if e.get("frameNumber", 0) == 0)
+                frames_missing = non_scratched2 and zero_frames2 > len(non_scratched2) * 0.5
+
                 # Live odds
                 time.sleep(0.5)
                 live = fetch_live_odds(rid)
@@ -142,16 +147,20 @@ def main():
                 if live_od:
                     od.update(live_od)  # Real odds override estimates
 
-                bets = optimize_bets(preds, od, info, entries=entries)
+                # Skip bet generation if frame numbers not confirmed
+                if frames_missing:
+                    bets = []
+                else:
+                    bets = optimize_bets(preds, od, info, entries=entries)
 
                 # Pattern
                 head_count = info.get("headCount", 16)
                 probs = scores_to_probabilities(preds, head_count)
                 pattern = detect_race_pattern(probs) if len(probs) >= 3 else ""
 
-                # Longshot
+                # Longshot (skip if frames not confirmed)
                 longshot = None
-                if len(probs) >= 3:
+                if len(probs) >= 3 and not frames_missing:
                     rng = random.Random(42)
                     cands = generate_candidates(probs, top_n=min(5, len(probs)))
                     fin = monte_carlo_finish(probs, 5000, rng=rng)

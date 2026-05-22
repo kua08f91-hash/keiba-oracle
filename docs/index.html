@@ -525,7 +525,7 @@ function renderBets(){
   const tc={tansho:"bg-red-100 text-red-700",fukusho:"bg-blue-100 text-blue-700",umaren:"bg-purple-100 text-purple-700",wide:"bg-teal-100 text-teal-700",sanrenpuku:"bg-emerald-100 text-emerald-700",sanrentan:"bg-orange-100 text-orange-700"};
   let h='';
   bets.forEach((b,i)=>{
-    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'-'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
+    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'未'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
     const ev=b.ev||0;const evC=ev>0?"bg-emerald-100 text-emerald-700 border border-emerald-200":ev>-0.1?"bg-amber-100 text-amber-700 border border-amber-200":"bg-gray-100 text-gray-500 border border-gray-200";
     const hasOdds=b.odds&&b.odds>0;
     const evLabel=hasOdds?`EV ${ev>0?'+':''}${(ev*100).toFixed(0)}%`:'Score推奨';
@@ -534,7 +534,7 @@ function renderBets(){
   // Longshot (穴場券)
   if(dLongshot){
     const b=dLongshot;
-    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'-'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
+    const names=(b.horses||[]).map(hn=>{const en=dE.find(x=>x.horseNumber===hn);const fc=FC[en?.frameNumber||1];return`<span class="inline-flex items-center gap-1 px-1.5 py-0.5 bg-white border border-gray-200 rounded text-[11px] font-bold shadow-sm"><span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-[8px] font-black" style="background:${fc.bg};color:${fc.text};border:1px solid ${fc.border}">${en?.frameNumber||'未'}</span><span class="text-gray-400">${hn}</span><span class="text-gray-800">${en?.horseName||''}</span></span>`;});
     const odds_b=b.odds||0;
     h+=`<div class="border-t-2 border-dashed border-amber-300 mx-3"></div>
     <div class="px-4 py-3 bg-gradient-to-r from-amber-50/80 to-white">
