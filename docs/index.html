@@ -416,8 +416,8 @@ async function _refreshLiveOdds(raceId){
     const data=await r.json();
     const liveEntries=data.entries||[];
     const livePreds=data.predictions||[];
-    // Skip if API returns incomplete data (fewer entries than static)
-    if(!liveEntries.length||liveEntries.length<dE.length*0.5)return;
+    // Skip if API returns bad data: too few (incomplete) or too many (stale, pre-scratch)
+    if(!liveEntries.length||liveEntries.length<dE.length*0.5||liveEntries.length>dE.length+2)return;
     // Update entries (odds + popularity)
     let updated=0;
     for(const le of liveEntries){

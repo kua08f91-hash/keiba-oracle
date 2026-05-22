@@ -148,11 +148,19 @@ def get_race_card(race_id: str):
 
     entries = data["entries"]
 
-    # If DB returned very few entries, force re-scrape (partial cache)
-    if len(entries) < 5:
-        data = fetch_race_card(race_id, force_refresh=True)
-        if data and len(data["entries"]) > len(entries):
-            entries = data["entries"]
+    # If DB returned stale data (too few or too many entries), force re-scrape
+    non_scratched = [e for e in entries if not e.get("isScratched")]
+    head_count = data["race_info"].get("headCount", 0)
+    needs_refresh = (
+        len(entries) < 5
+        or (head_count > 0 and abs(len(non_scratched) - head_count) > 2)
+    )
+    if needs_refresh:
+        data2 = fetch_race_card(race_id, force_refresh=True)
+        if data2 and data2["entries"]:
+            entries = data2["entries"]
+            data["entries"] = entries
+            data["race_info"] = data2["race_info"]
 
     # Try DB cache first (populated by realtime_worker)
     cached = _get_cached_predictions(race_id)
