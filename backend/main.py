@@ -148,6 +148,12 @@ def get_race_card(race_id: str):
 
     entries = data["entries"]
 
+    # If DB returned very few entries, force re-scrape (partial cache)
+    if len(entries) < 5:
+        data = fetch_race_card(race_id, force_refresh=True)
+        if data and len(data["entries"]) > len(entries):
+            entries = data["entries"]
+
     # Try DB cache first (populated by realtime_worker)
     cached = _get_cached_predictions(race_id)
     if cached and cached["predictions"]:
