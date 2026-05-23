@@ -185,6 +185,49 @@ def health():
     return {"status": "ok"}
 
 
+@app.post("/api/clear-cache/{race_id}")
+def clear_cache(race_id: str):
+    """Clear DB cache for a race to force fresh scrape on next request."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+    db = get_session()
+    try:
+        db.query(HorseEntry).filter(HorseEntry.race_id == race_id).delete()
+        db.query(Race).filter(Race.race_id == race_id).delete()
+        cache = db.query(PredictionsCache).filter(PredictionsCache.race_id == race_id).first()
+        if cache:
+            db.delete(cache)
+        db.commit()
+        return {"status": "ok", "race_id": race_id, "message": "Cache cleared"}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+
+@app.post("/api/clear-cache-date/{date}")
+def clear_cache_date(date: str):
+    """Clear DB cache for all races on a given date (YYYYMMDD)."""
+    if not date or len(date) != 8 or not date.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid date format.")
+    db = get_session()
+    try:
+        races = db.query(Race).filter(Race.date == date).all()
+        race_ids = [r.race_id for r in races]
+        for rid in race_ids:
+            db.query(HorseEntry).filter(HorseEntry.race_id == rid).delete()
+            db.query(PredictionsCache).filter(PredictionsCache.race_id == rid).delete()
+        db.query(Race).filter(Race.date == date).delete()
+        db.commit()
+        return {"status": "ok", "date": date, "cleared": len(race_ids)}
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}
+    finally:
+        db.close()
+
+
 @app.get("/api/race-list")
 def get_race_list(date: str):
     """Get available races for a given date (YYYYMMDD)."""
