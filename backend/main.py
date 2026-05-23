@@ -134,6 +134,8 @@ def _should_auto_freeze(race_id: str) -> bool:
             return mins_to_post <= FREEZE_THRESHOLD_MINS
         except Exception:
             return False
+    except Exception:
+        return False
     finally:
         db.close()
 
