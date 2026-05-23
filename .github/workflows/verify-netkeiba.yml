@@ -1,0 +1,31 @@
+name: Verify netkeiba accessibility
+
+# 手動トリガー専用。GitHub Actions runner の IP から netkeiba の全エンドポイントが
+# 叩けるか確認する。Railway 移行前のサニティチェックとして使用。
+#
+# 使い方:
+#   GitHub UI → Actions → "Verify netkeiba accessibility" → Run workflow
+#   ログで "All endpoints OK" が出れば疎通OK。
+#   "BOT DETECTION DETECTED" が出た場合は docs/RAILWAY_MIGRATION.md の付録B参照。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run verification
+        run: python3 scripts/verify_netkeiba_access.py
