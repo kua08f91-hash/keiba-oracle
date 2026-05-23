@@ -3,27 +3,41 @@ name: Export Predictions
 on:
   schedule:
     # ── 土曜 (レース日) ── JST = UTC+9
-    - cron: '0 21 * * 5'   # 06:00 JST — 朝イチ予想
-    - cron: '0 0 * * 6'    # 09:00 JST — レース開始前
-    - cron: '0 1 * * 6'    # 10:00 JST — 1R前後
-    - cron: '0 2 * * 6'    # 11:00 JST
-    - cron: '0 3 * * 6'    # 12:00 JST
-    - cron: '0 4 * * 6'    # 13:00 JST
-    - cron: '0 5 * * 6'    # 14:00 JST
-    - cron: '0 6 * * 6'    # 15:00 JST — メインレース前
-    - cron: '0 7 * * 6'    # 16:00 JST — 最終レース前
+    # GitHub Actions cron can be delayed/skipped, so schedule every 30 min for key hours
+    - cron: '0 21 * * 5'    # 06:00 JST — 朝イチ予想
+    - cron: '30 22 * * 5'   # 07:30 JST
+    - cron: '0 0 * * 6'     # 09:00 JST — レース開始前
+    - cron: '30 0 * * 6'    # 09:30 JST
+    - cron: '0 1 * * 6'     # 10:00 JST — 1R前後
+    - cron: '30 1 * * 6'    # 10:30 JST
+    - cron: '0 2 * * 6'     # 11:00 JST
+    - cron: '30 2 * * 6'    # 11:30 JST
+    - cron: '0 3 * * 6'     # 12:00 JST
+    - cron: '0 4 * * 6'     # 13:00 JST
+    - cron: '0 5 * * 6'     # 14:00 JST
+    - cron: '0 6 * * 6'     # 15:00 JST — メインレース前
+    - cron: '0 7 * * 6'     # 16:00 JST — 最終レース前
 
     # ── 日曜 (レース日) ──
-    - cron: '0 21 * * 6'   # 06:00 JST — 朝イチ予想
-    - cron: '0 0 * * 0'    # 09:00 JST — レース開始前
-    - cron: '0 1 * * 0'    # 10:00 JST
-    - cron: '0 2 * * 0'    # 11:00 JST
-    - cron: '0 3 * * 0'    # 12:00 JST
-    - cron: '0 4 * * 0'    # 13:00 JST
-    - cron: '0 5 * * 0'    # 14:00 JST
-    - cron: '0 6 * * 0'    # 15:00 JST — メインレース前
-    - cron: '0 7 * * 0'    # 16:00 JST — 最終レース前
+    - cron: '0 21 * * 6'    # 06:00 JST — 朝イチ予想
+    - cron: '30 22 * * 6'   # 07:30 JST
+    - cron: '0 0 * * 0'     # 09:00 JST — レース開始前
+    - cron: '30 0 * * 0'    # 09:30 JST
+    - cron: '0 1 * * 0'     # 10:00 JST
+    - cron: '30 1 * * 0'    # 10:30 JST
+    - cron: '0 2 * * 0'     # 11:00 JST
+    - cron: '30 2 * * 0'    # 11:30 JST
+    - cron: '0 3 * * 0'     # 12:00 JST
+    - cron: '0 4 * * 0'     # 13:00 JST
+    - cron: '0 5 * * 0'     # 14:00 JST
+    - cron: '0 6 * * 0'     # 15:00 JST — メインレース前
+    - cron: '0 7 * * 0'     # 16:00 JST — 最終レース前
   workflow_dispatch: {}
+
+# Prevent concurrent runs (if previous export is still running, skip)
+concurrency:
+  group: export-predictions
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -46,8 +60,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
 
-      - name: Run export
-        run: python -m backend.export_predictions
+      - name: Run export (with retry)
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Attempt $attempt ==="
+            if python -m backend.export_predictions; then
+              echo "Export succeeded on attempt $attempt"
+              break
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "Export failed, retrying in 30s..."
+              sleep 30
+            else
+              echo "Export failed after 3 attempts"
+              exit 1
+            fi
+          done
         env:
           PYTHONUNBUFFERED: '1'
 
@@ -67,4 +95,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add docs/data/predictions.json docs/data/archive/
           git commit -m "Auto-update predictions ($(TZ=Asia/Tokyo date '+%m/%d %H:%M') JST)"
-          git push
+          for attempt in 1 2 3; do
+            if git push; then
+              break
+            fi
+            echo "Push failed (attempt $attempt), pulling and retrying..."
+            git pull --rebase
+          done

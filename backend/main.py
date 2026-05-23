@@ -83,6 +83,9 @@ def _race_list_from_db(date_str: str) -> list:
         db.close()
 
 
+FREEZE_THRESHOLD_MINS = 7
+
+
 def _get_cached_predictions(race_id: str):
     """Return cached predictions from DB if available."""
     db = get_session()
@@ -102,6 +105,67 @@ def _get_cached_predictions(race_id: str):
         }
     except Exception:
         return None
+    finally:
+        db.close()
+
+
+def _should_auto_freeze(race_id: str) -> bool:
+    """Check if race is within FREEZE_THRESHOLD_MINS of post time.
+
+    API-level fallback: ensures freeze even if realtime_worker isn't running.
+    """
+    db = get_session()
+    try:
+        status = db.query(RaceStatus).filter(RaceStatus.race_id == race_id).first()
+        if not status or not status.start_time:
+            # Try to get start_time from Race table
+            race = db.query(Race).filter(Race.race_id == race_id).first()
+            if not race or not race.start_time:
+                return False
+            start_time = race.start_time
+        else:
+            start_time = status.start_time
+
+        try:
+            h, m = start_time.split(":")
+            now = now_jst()
+            start = now.replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+            mins_to_post = (start - now).total_seconds() / 60
+            return mins_to_post <= FREEZE_THRESHOLD_MINS
+        except Exception:
+            return False
+    finally:
+        db.close()
+
+
+def _auto_freeze_and_cache(race_id: str, predictions: list, bets: list,
+                           longshot, pattern: str):
+    """Auto-freeze: save predictions to DB as frozen (API-level fallback)."""
+    from backend._tz import now_utc
+    db = get_session()
+    try:
+        cache = db.query(PredictionsCache).filter(
+            PredictionsCache.race_id == race_id
+        ).first()
+        if not cache:
+            cache = PredictionsCache(race_id=race_id)
+            db.add(cache)
+        cache.predictions_json = json.dumps(predictions, ensure_ascii=False, default=str)
+        cache.bets_json = json.dumps(bets, ensure_ascii=False, default=str)
+        cache.longshot_json = json.dumps(longshot, ensure_ascii=False, default=str) if longshot else None
+        cache.pattern = pattern
+        cache.frozen = True
+        cache.updated_at = now_utc()
+
+        status = db.query(RaceStatus).filter(RaceStatus.race_id == race_id).first()
+        if status:
+            status.status = "frozen"
+
+        db.commit()
+        logger.info("API auto-freeze: %s", race_id)
+    except Exception as e:
+        db.rollback()
+        logger.error("auto_freeze failed for %s: %s", race_id, e)
     finally:
         db.close()
 
@@ -212,6 +276,42 @@ def get_race_card(race_id: str):
 
     predictions = predictor.predict(data["race_info"], entries)
 
+    # API-level auto-freeze: if within 7 min of post, freeze predictions now
+    if _should_auto_freeze(race_id):
+        from backend.scraper.odds import estimate_from_entries
+        odds_data = estimate_from_entries(entries) or {}
+        try:
+            odds_data = _fetch_live_combination_odds(race_id, odds_data)
+        except Exception:
+            pass
+        bets = optimize_bets(predictions, odds_data, data["race_info"])
+        head_count = data["race_info"].get("headCount", 16)
+        probs = scores_to_probabilities(predictions, head_count)
+        pattern = detect_race_pattern(probs)
+        import random
+        rng = random.Random(42)
+        cands = generate_candidates(probs, top_n=min(5, len(probs)))
+        fin = monte_carlo_finish(probs, 5000, rng=rng)
+        cands = estimate_hit_probabilities(fin, cands)
+        for c in cands:
+            oi = find_odds_for_bet(c, odds_data)
+            if oi:
+                c["odds"] = oi["odds"]
+                c["ev"] = c["hitProb"] * oi["odds"] - 1
+            else:
+                est = implied_fair_odds(c["hitProb"])
+                c["odds"] = round(est, 1)
+                c["ev"] = c["hitProb"] * est - 1
+        longshot = pick_longshot(cands, bets, probs)
+        _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
+        return {
+            "raceInfo": data["race_info"],
+            "entries": entries,
+            "predictions": predictions,
+            "frozen": True,
+            "updatedAt": None,
+        }
+
     return {
         "raceInfo": data["race_info"],
         "entries": entries,
@@ -305,12 +405,17 @@ def get_optimized_bets(race_id: str):
                 c["ev"] = c["hitProb"] * est - 1.0
         longshot = pick_longshot(all_candidates, bets, probs)
 
+        # API-level auto-freeze
+        is_frozen = _should_auto_freeze(race_id)
+        if is_frozen:
+            _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
+
         return {
             "bets": bets,
             "longshot": longshot,
             "pattern": pattern,
             "raceId": race_id,
-            "frozen": False,
+            "frozen": is_frozen,
             "updatedAt": None,
         }
     except Exception as e:

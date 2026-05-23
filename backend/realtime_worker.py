@@ -450,9 +450,55 @@ def compute_update_interval(min_mins: float) -> int:
         return 300
 
 
+LOCK_FILE = "/tmp/keiba-realtime-worker.lock"
+
+
+def _acquire_lock() -> bool:
+    """Acquire a PID-based lock file. Returns True if lock acquired."""
+    import fcntl
+    try:
+        # Check if existing lock is stale
+        if os.path.exists(LOCK_FILE):
+            try:
+                with open(LOCK_FILE, "r") as f:
+                    old_pid = int(f.read().strip())
+                # Check if process is still running
+                os.kill(old_pid, 0)
+                # Process is alive — don't start another
+                logger.info("Another worker is running (PID %d). Exiting.", old_pid)
+                return False
+            except (ValueError, ProcessLookupError, PermissionError):
+                # Stale lock — remove it
+                os.remove(LOCK_FILE)
+
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        return True
+    except Exception as e:
+        logger.error("Failed to acquire lock: %s", e)
+        return False
+
+
+def _release_lock():
+    """Release the PID lock file."""
+    try:
+        if os.path.exists(LOCK_FILE):
+            with open(LOCK_FILE, "r") as f:
+                pid = int(f.read().strip())
+            if pid == os.getpid():
+                os.remove(LOCK_FILE)
+    except Exception:
+        pass
+
+
 def main():
-    worker = RealtimeWorker()
-    worker.run()
+    if not _acquire_lock():
+        return
+    try:
+        worker = RealtimeWorker()
+        worker.run()
+    finally:
+        _release_lock()
 
 
 if __name__ == "__main__":
