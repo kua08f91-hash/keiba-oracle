@@ -341,55 +341,65 @@ async function loadRaceDetail(id){
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
 
-  // Try static data first
-  if(staticData){
-    for(const day of staticData){
-      for(const course of day.courses){
-        const race=course.races.find(r=>r.raceId===id);
-        if(race){
-          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
-          renderDetail(race.raceInfo,race.pattern||"");
+  // Always try API first for latest odds/predictions
+  // Static data is only used as fallback when API fails
+  let usedApi = false;
+  if(API){
+    try{
+      const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(20000)});
+      if(!cr.ok)throw Error("API error");
+      const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
+      renderDetail(c.raceInfo,"");
+      try{
+        const be=document.getElementById("bets");
+        if(be)be.innerHTML='<div class="px-4 py-4 text-center"><div class="animate-spin inline-block w-5 h-5 border-2 border-navy-800 border-t-gold-400 rounded-full"></div><span class="text-xs text-gray-400 ml-2">Calculating bets...</span></div>';
+        const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(20000)});
+        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
           const pb=document.getElementById("detail-pattern");
-          if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
-          renderBets();
-          // Start live odds polling (60s interval) while on detail page
-          if(API){_startOddsPolling(id);}
-          return;
+          if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
+        }
+      }catch(e){}
+      if((!dB||dB.length===0)&&dP.length>=3){
+        const ranked=dP.filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+        if(ranked.length>=3){
+          const h=ranked.map(r=>r.horseNumber);
+          dB=[
+            {rank:1,type:"wide",typeLabel:"ワイド",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
+            {rank:2,type:"wide",typeLabel:"ワイド",horses:[h[0],h[2]],ev:0,odds:0,hitProb:0},
+            {rank:3,type:"umaren",typeLabel:"馬連",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
+            {rank:4,type:"sanrenpuku",typeLabel:"3連複",horses:[h[0],h[1],h[2]],ev:0,odds:0,hitProb:0},
+            {rank:5,type:"tansho",typeLabel:"単勝",horses:[h[0]],ev:0,odds:0,hitProb:0},
+          ];
         }
       }
+      renderBets();
+      usedApi=true;
+      _startOddsPolling(id);
+    }catch(e){
+      console.warn("API failed, falling back to static:", e);
     }
   }
 
-  // Fallback: API
-  try{
-    const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`);if(!cr.ok)throw Error("Not found");
-    const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
-    renderDetail(c.raceInfo,"");
-    try{
-      const be=document.getElementById("bets");
-      if(be)be.innerHTML='<div class="px-4 py-4 text-center"><div class="animate-spin inline-block w-5 h-5 border-2 border-navy-800 border-t-gold-400 rounded-full"></div><span class="text-xs text-gray-400 ml-2">Calculating bets...</span></div>';
-      const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`);
-      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
-        const pb=document.getElementById("detail-pattern");
-        if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
-      }
-    }catch(e){}
-    // Always generate fallback bets from scores if API returned none
-    if((!dB||dB.length===0)&&dP.length>=3){
-      const ranked=dP.filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
-      if(ranked.length>=3){
-        const h=ranked.map(r=>r.horseNumber);
-        dB=[
-          {rank:1,type:"wide",typeLabel:"ワイド",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
-          {rank:2,type:"wide",typeLabel:"ワイド",horses:[h[0],h[2]],ev:0,odds:0,hitProb:0},
-          {rank:3,type:"umaren",typeLabel:"馬連",horses:[h[0],h[1]],ev:0,odds:0,hitProb:0},
-          {rank:4,type:"sanrenpuku",typeLabel:"3連複",horses:[h[0],h[1],h[2]],ev:0,odds:0,hitProb:0},
-          {rank:5,type:"tansho",typeLabel:"単勝",horses:[h[0]],ev:0,odds:0,hitProb:0},
-        ];
+  // Fallback: static data (only when API unavailable)
+  if(!usedApi){
+    if(staticData){
+      for(const day of staticData){
+        for(const course of day.courses){
+          const race=course.races.find(r=>r.raceId===id);
+          if(race){
+            dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+            renderDetail(race.raceInfo,race.pattern||"");
+            const pb=document.getElementById("detail-pattern");
+            if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
+            renderBets();
+            if(API){_startOddsPolling(id);}
+            return;
+          }
+        }
       }
     }
-    renderBets();
-  }catch(e){el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;}
+    el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;
+  }
 }
 
 let _oddsTimer=null;
