@@ -294,30 +294,39 @@ def get_race_card(race_id: str):
             db.close()
 
     # Fallback: live computation (worker not running or no cache yet)
-    # Fetch live odds
-    try:
-        import requests as _req
-        url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
-        r = _req.get(url, headers={
-            "User-Agent": "Mozilla/5.0",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-        }, timeout=15)
-        d = json.loads(r.text)
-        tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
-        if tansho:
-            for e in entries:
-                hn_str = str(e["horseNumber"]).zfill(2)
-                if hn_str in tansho:
-                    vals = tansho[hn_str]
-                    if isinstance(vals, list) and len(vals) >= 3:
-                        try:
-                            e["odds"] = float(vals[0])
-                            e["popularity"] = int(vals[2])
-                        except (ValueError, IndexError):
-                            pass
-    except Exception as e:
-        logger.warning("Live odds fetch failed for %s: %s", race_id, e)
+    # Fetch live odds with retry
+    import requests as _req
+    for _attempt in range(3):
+        try:
+            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
+            r = _req.get(url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
+            }, timeout=15)
+            d = json.loads(r.text)
+            tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
+            if tansho:
+                for e in entries:
+                    hn_str = str(e["horseNumber"]).zfill(2)
+                    if hn_str in tansho:
+                        vals = tansho[hn_str]
+                        if isinstance(vals, list) and len(vals) >= 3:
+                            try:
+                                e["odds"] = float(vals[0])
+                                e["popularity"] = int(vals[2])
+                            except (ValueError, IndexError):
+                                pass
+                break  # Success
+            # Empty response — retry
+            if _attempt < 2:
+                import time as _time
+                _time.sleep(2)
+        except Exception as e:
+            logger.warning("Live odds fetch attempt %d failed for %s: %s", _attempt + 1, race_id, e)
+            if _attempt < 2:
+                import time as _time
+                _time.sleep(2)
 
     predictions = predictor.predict(data["race_info"], entries)
 
