@@ -17,6 +17,7 @@ from ..database.models import Race, HorseEntry
 
 SCRAPE_DELAY = 5  # seconds between requests
 CACHE_TTL = timedelta(days=30)
+CACHE_TTL_RACEDAY = timedelta(minutes=30)  # レース当日はキャッシュ30分で失効
 
 SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -65,7 +66,13 @@ def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]
             cached_race = db.query(Race).filter(Race.race_id == race_id).first()
             if cached_race and cached_race.scraped_at:
                 age = datetime.utcnow() - cached_race.scraped_at
-                if age < CACHE_TTL:
+
+                # Use shorter TTL on race day (date in race_id matches today)
+                today_str = datetime.now().strftime("%Y%m%d")
+                race_date = cached_race.date if cached_race.date else ""
+                ttl = CACHE_TTL_RACEDAY if race_date == today_str else CACHE_TTL
+
+                if age < ttl:
                     entries = db.query(HorseEntry).filter(
                         HorseEntry.race_id == race_id
                     ).all()
@@ -74,13 +81,23 @@ def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]
                         non_scratched = [e for e in entries if not e.is_scratched]
                         zero_frames = sum(1 for e in non_scratched if e.frame_number == 0)
                         if non_scratched and zero_frames > len(non_scratched) * 0.5:
-                            # Majority of entries have frame_number=0 — stale cache
                             logger.info(
                                 "Race %s: %d/%d entries have frame=0, invalidating cache",
                                 race_id, zero_frames, len(non_scratched),
                             )
                         else:
-                            return _format_cached(cached_race, entries)
+                            # Check if odds are missing — invalidate on race day
+                            if race_date == today_str:
+                                no_odds = sum(1 for e in non_scratched if e.odds is None)
+                                if no_odds > len(non_scratched) * 0.5:
+                                    logger.info(
+                                        "Race %s: %d/%d entries have no odds on race day, re-fetching",
+                                        race_id, no_odds, len(non_scratched),
+                                    )
+                                else:
+                                    return _format_cached(cached_race, entries)
+                            else:
+                                return _format_cached(cached_race, entries)
         finally:
             db.close()
 
