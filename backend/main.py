@@ -302,7 +302,7 @@ def get_race_card(race_id: str):
             "User-Agent": "Mozilla/5.0",
             "X-Requested-With": "XMLHttpRequest",
             "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-        }, timeout=5)
+        }, timeout=15)
         d = json.loads(r.text)
         tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
         if tansho:
@@ -316,8 +316,8 @@ def get_race_card(race_id: str):
                             e["popularity"] = int(vals[2])
                         except (ValueError, IndexError):
                             pass
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Live odds fetch failed for %s: %s", race_id, e)
 
     predictions = predictor.predict(data["race_info"], entries)
 
