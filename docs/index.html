@@ -372,6 +372,17 @@ async function loadRaceDetail(id){
           ];
         }
       }
+      // If odds are missing, fetch from live-odds endpoint immediately
+      const _noOdds=dE.filter(e=>e.odds==null&&!e.isScratched).length;
+      if(_noOdds>dE.length*0.3){
+        try{
+          const _lor=await fetch(`${API}/live-odds/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+          if(_lor.ok){const _lod=await _lor.json();
+            if(_lod.odds){for(const e of dE){const lo=_lod.odds[String(e.horseNumber)];if(lo){e.odds=lo.odds;e.popularity=lo.popularity;}}}
+            renderDetail(c.raceInfo,"");
+          }
+        }catch(e){}
+      }
       renderBets();
       usedApi=true;
       _startOddsPolling(id);
@@ -421,30 +432,57 @@ function _stopOddsPolling(){
 async function _refreshLiveOdds(raceId){
   if(_currentOddsRaceId!==raceId)return;
   try{
-    const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});
+    const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
     if(!r.ok)return;
     const data=await r.json();
     const liveEntries=data.entries||[];
     const livePreds=data.predictions||[];
-    // Skip if API returns bad data: too few (incomplete) or too many (stale, pre-scratch)
     if(!liveEntries.length||liveEntries.length<dE.length*0.5||liveEntries.length>dE.length+2)return;
+
+    // Check if API returned entries without odds (Railway→netkeiba failure)
+    const noOddsCount=liveEntries.filter(e=>e.odds==null&&!e.isScratched).length;
+    const totalActive=liveEntries.filter(e=>!e.isScratched).length;
+    let liveOddsMap=null;
+
+    if(noOddsCount>totalActive*0.5){
+      // Too many missing odds — fetch directly via live-odds endpoint
+      try{
+        const lor=await fetch(`${API}/live-odds/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+        if(lor.ok){
+          const lod=await lor.json();
+          if(lod.odds&&Object.keys(lod.odds).length>0){
+            liveOddsMap=lod.odds;
+          }
+        }
+      }catch(e){}
+    }
+
     // Update entries (odds + popularity)
     let updated=0;
     for(const le of liveEntries){
       const idx=dE.findIndex(e=>e.horseNumber===le.horseNumber);
-      if(idx>=0&&le.odds!=null){
-        if(dE[idx].odds!==le.odds){dE[idx].odds=le.odds;dE[idx].popularity=le.popularity;updated++;}
+      if(idx<0)continue;
+      // Use live-odds endpoint data if available, otherwise API data
+      const lo=liveOddsMap?liveOddsMap[String(le.horseNumber)]:null;
+      const newOdds=lo?lo.odds:(le.odds!=null?le.odds:null);
+      const newPop=lo?lo.popularity:(le.popularity!=null?le.popularity:null);
+      if(newOdds!=null&&dE[idx].odds!==newOdds){
+        dE[idx].odds=newOdds;dE[idx].popularity=newPop;updated++;
       }
     }
-    // Update predictions (scores + marks recalculated with live odds)
-    if(livePreds.length>0){
-      dP=livePreds;updated++;
+    // Also fill any remaining dE entries from liveOddsMap
+    if(liveOddsMap){
+      for(const e of dE){
+        const lo=liveOddsMap[String(e.horseNumber)];
+        if(lo&&e.odds==null){e.odds=lo.odds;e.popularity=lo.popularity;updated++;}
+      }
     }
+    // Update predictions
+    if(livePreds.length>0){dP=livePreds;updated++;}
     if(updated>0){
       renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
-      // Also refresh bets from API
       try{
-        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});
+        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
         if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;}
       }catch(e2){}
       renderBets();

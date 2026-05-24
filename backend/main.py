@@ -187,6 +187,46 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/live-odds/{race_id}")
+def get_live_odds(race_id: str):
+    """Fetch live odds directly from netkeiba (no DB cache).
+
+    This bypasses all caching — always returns fresh data from netkeiba API.
+    Used by frontend when standard racecard endpoint returns stale odds.
+    """
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+    import requests as _req
+    result = {}
+    for attempt in range(3):
+        try:
+            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
+            r = _req.get(url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
+            }, timeout=15)
+            d = json.loads(r.text)
+            tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
+            for hn_str, vals in tansho.items():
+                if isinstance(vals, list) and len(vals) >= 3:
+                    try:
+                        result[int(hn_str)] = {"odds": float(vals[0]), "popularity": int(vals[2])}
+                    except (ValueError, IndexError):
+                        pass
+            if result:
+                return {"odds": result, "source": "live", "race_id": race_id}
+            if attempt < 2:
+                import time as _time
+                _time.sleep(2)
+        except Exception as e:
+            logger.warning("live-odds attempt %d for %s: %s", attempt + 1, race_id, e)
+            if attempt < 2:
+                import time as _time
+                _time.sleep(2)
+    return {"odds": {}, "source": "failed", "race_id": race_id}
+
+
 @app.post("/api/clear-cache/{race_id}")
 def clear_cache(race_id: str):
     """Clear DB cache for a race to force fresh scrape on next request."""
