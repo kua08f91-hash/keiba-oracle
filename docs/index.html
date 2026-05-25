@@ -341,24 +341,25 @@ async function loadRaceDetail(id){
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
 
-  // Always try API first for latest odds/predictions
-  // Static data is only used as fallback when API fails
+  // Always try API first — parallel fetch racecard + bets for speed
   let usedApi = false;
   if(API){
     try{
-      const cr=await fetch(`${API}/racecard/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(20000)});
+      const t=Date.now();
+      // Parallel fetch: racecard + optimized-bets simultaneously
+      const [cr, br] = await Promise.all([
+        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(20000)}),
+        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(20000)}).catch(()=>null),
+      ]);
       if(!cr.ok)throw Error("API error");
       const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
       renderDetail(c.raceInfo,"");
-      try{
-        const be=document.getElementById("bets");
-        if(be)be.innerHTML='<div class="px-4 py-4 text-center"><div class="animate-spin inline-block w-5 h-5 border-2 border-navy-800 border-t-gold-400 rounded-full"></div><span class="text-xs text-gray-400 ml-2">Calculating bets...</span></div>';
-        const br=await fetch(`${API}/optimized-bets/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(20000)});
-        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
-          const pb=document.getElementById("detail-pattern");
-          if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
-        }
-      }catch(e){}
+      // Apply bets from parallel fetch
+      if(br&&br.ok){
+        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
+        const pb=document.getElementById("detail-pattern");
+        if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
+      }
       if((!dB||dB.length===0)&&dP.length>=3){
         const ranked=dP.filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
         if(ranked.length>=3){
@@ -372,16 +373,16 @@ async function loadRaceDetail(id){
           ];
         }
       }
-      // If odds are missing, fetch from live-odds endpoint immediately
+      // If odds are missing, fetch live-odds in background (non-blocking render)
       const _noOdds=dE.filter(e=>e.odds==null&&!e.isScratched).length;
       if(_noOdds>dE.length*0.3){
-        try{
-          const _lor=await fetch(`${API}/live-odds/${id}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-          if(_lor.ok){const _lod=await _lor.json();
-            if(_lod.odds){for(const e of dE){const lo=_lod.odds[String(e.horseNumber)];if(lo){e.odds=lo.odds;e.popularity=lo.popularity;}}}
-            renderDetail(c.raceInfo,"");
-          }
-        }catch(e){}
+        fetch(`${API}/live-odds/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)})
+          .then(r=>r.ok?r.json():null).then(d=>{
+            if(d&&d.odds){
+              for(const e of dE){const lo=d.odds[String(e.horseNumber)];if(lo){e.odds=lo.odds;e.popularity=lo.popularity;}}
+              renderDetail(c.raceInfo,"");renderBets();
+            }
+          }).catch(()=>{});
       }
       renderBets();
       usedApi=true;

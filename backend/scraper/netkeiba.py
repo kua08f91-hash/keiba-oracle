@@ -18,6 +18,7 @@ from ..database.models import Race, HorseEntry
 SCRAPE_DELAY = 5  # seconds between requests
 CACHE_TTL = timedelta(days=30)
 CACHE_TTL_RACEDAY = timedelta(minutes=30)  # レース当日はキャッシュ30分で失効
+CACHE_TTL_NO_ODDS = timedelta(minutes=5)   # オッズなしキャッシュは5分で失効
 
 SESSION_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -72,32 +73,29 @@ def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]
                 race_date = cached_race.date if cached_race.date else ""
                 ttl = CACHE_TTL_RACEDAY if race_date == today_str else CACHE_TTL
 
-                if age < ttl:
-                    entries = db.query(HorseEntry).filter(
-                        HorseEntry.race_id == race_id
-                    ).all()
-                    if entries:
-                        # Check if frame numbers are populated
-                        non_scratched = [e for e in entries if not e.is_scratched]
-                        zero_frames = sum(1 for e in non_scratched if e.frame_number == 0)
-                        if non_scratched and zero_frames > len(non_scratched) * 0.5:
-                            logger.info(
-                                "Race %s: %d/%d entries have frame=0, invalidating cache",
-                                race_id, zero_frames, len(non_scratched),
-                            )
-                        else:
-                            # Check if odds are missing — invalidate on race day
-                            if race_date == today_str:
-                                no_odds = sum(1 for e in non_scratched if e.odds is None)
-                                if no_odds > len(non_scratched) * 0.5:
-                                    logger.info(
-                                        "Race %s: %d/%d entries have no odds on race day, re-fetching",
-                                        race_id, no_odds, len(non_scratched),
-                                    )
-                                else:
-                                    return _format_cached(cached_race, entries)
-                            else:
-                                return _format_cached(cached_race, entries)
+                entries = db.query(HorseEntry).filter(
+                    HorseEntry.race_id == race_id
+                ).all()
+                if entries:
+                    non_scratched = [e for e in entries if not e.is_scratched]
+                    zero_frames = sum(1 for e in non_scratched if e.frame_number == 0)
+                    no_odds = sum(1 for e in non_scratched if e.odds is None)
+
+                    # オッズなしキャッシュは5分で強制失効（レース日問わず）
+                    if non_scratched and no_odds > len(non_scratched) * 0.5:
+                        if age < CACHE_TTL_NO_ODDS:
+                            return _format_cached(cached_race, entries)
+                        logger.info(
+                            "Race %s: %d/%d entries have no odds, cache expired (>5min)",
+                            race_id, no_odds, len(non_scratched),
+                        )
+                    elif non_scratched and zero_frames > len(non_scratched) * 0.5:
+                        logger.info(
+                            "Race %s: %d/%d entries have frame=0, invalidating cache",
+                            race_id, zero_frames, len(non_scratched),
+                        )
+                    elif age < ttl:
+                        return _format_cached(cached_race, entries)
         finally:
             db.close()
 

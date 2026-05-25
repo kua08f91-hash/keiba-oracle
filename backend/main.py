@@ -187,16 +187,14 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/live-odds/{race_id}")
-def get_live_odds(race_id: str):
-    """Fetch live odds directly from netkeiba (no DB cache).
+def _fetch_live_win_odds(race_id: str) -> dict:
+    """Fetch live win odds from netkeiba API with 3 retries.
 
-    This bypasses all caching — always returns fresh data from netkeiba API.
-    Used by frontend when standard racecard endpoint returns stale odds.
+    Returns {horse_number: {"odds": float, "popularity": int}} or empty dict.
+    Shared by racecard endpoint, live-odds endpoint, and polling.
     """
-    if not race_id or len(race_id) < 10:
-        raise HTTPException(status_code=400, detail="Invalid race ID.")
     import requests as _req
+    import time as _time
     result = {}
     for attempt in range(3):
         try:
@@ -215,15 +213,51 @@ def get_live_odds(race_id: str):
                     except (ValueError, IndexError):
                         pass
             if result:
-                return {"odds": result, "source": "live", "race_id": race_id}
+                return result
             if attempt < 2:
-                import time as _time
                 _time.sleep(2)
         except Exception as e:
-            logger.warning("live-odds attempt %d for %s: %s", attempt + 1, race_id, e)
+            logger.warning("_fetch_live_win_odds attempt %d for %s: %s", attempt + 1, race_id, e)
             if attempt < 2:
-                import time as _time
                 _time.sleep(2)
+    return result
+
+
+def _apply_odds_to_entries(entries: list, odds: dict):
+    """Apply odds dict to entries list. Mutates entries in-place."""
+    for e in entries:
+        hn = e["horseNumber"]
+        if hn in odds:
+            e["odds"] = odds[hn]["odds"]
+            e["popularity"] = odds[hn]["popularity"]
+
+
+def _save_odds_to_db(race_id: str, odds: dict):
+    """Persist live odds to DB so subsequent cache hits include odds."""
+    if not odds:
+        return
+    db = get_session()
+    try:
+        for he in db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all():
+            if he.horse_number in odds:
+                he.odds = odds[he.horse_number]["odds"]
+                he.popularity = odds[he.horse_number]["popularity"]
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
+@app.get("/api/live-odds/{race_id}")
+def get_live_odds(race_id: str):
+    """Fetch live odds directly from netkeiba (no DB cache)."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+    result = _fetch_live_win_odds(race_id)
+    if result:
+        _save_odds_to_db(race_id, result)
+        return {"odds": result, "source": "live", "race_id": race_id}
     return {"odds": {}, "source": "failed", "race_id": race_id}
 
 
@@ -333,40 +367,13 @@ def get_race_card(race_id: str):
         finally:
             db.close()
 
-    # Fallback: live computation (worker not running or no cache yet)
-    # Fetch live odds with retry
-    import requests as _req
-    for _attempt in range(3):
-        try:
-            url = f"https://race.netkeiba.com/api/api_get_jra_odds.html?race_id={race_id}&type=1&action=init"
-            r = _req.get(url, headers={
-                "User-Agent": "Mozilla/5.0",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-            }, timeout=15)
-            d = json.loads(r.text)
-            tansho = d.get("data", {}).get("odds", {}).get("1", {}) if isinstance(d.get("data"), dict) else {}
-            if tansho:
-                for e in entries:
-                    hn_str = str(e["horseNumber"]).zfill(2)
-                    if hn_str in tansho:
-                        vals = tansho[hn_str]
-                        if isinstance(vals, list) and len(vals) >= 3:
-                            try:
-                                e["odds"] = float(vals[0])
-                                e["popularity"] = int(vals[2])
-                            except (ValueError, IndexError):
-                                pass
-                break  # Success
-            # Empty response — retry
-            if _attempt < 2:
-                import time as _time
-                _time.sleep(2)
-        except Exception as e:
-            logger.warning("Live odds fetch attempt %d failed for %s: %s", _attempt + 1, race_id, e)
-            if _attempt < 2:
-                import time as _time
-                _time.sleep(2)
+    # Fetch live odds — always try for latest data, persist to DB on success
+    no_odds = sum(1 for e in entries if e.get("odds") is None and not e.get("isScratched"))
+    if no_odds > 0:
+        live_odds = _fetch_live_win_odds(race_id)
+        if live_odds:
+            _apply_odds_to_entries(entries, live_odds)
+            _save_odds_to_db(race_id, live_odds)
 
     predictions = predictor.predict(data["race_info"], entries)
 
