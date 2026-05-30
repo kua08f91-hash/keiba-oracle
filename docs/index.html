@@ -218,7 +218,11 @@ async function loadAndRenderDay(ds){
                   // Update badge in DOM
                   const badge=cf==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>';
                   const el=document.querySelector(`[data-conf-id="${rid}"]`);
-                  if(el){el.innerHTML=badge;el.style.display='';}
+                  if(el){el.innerHTML=badge;}else{
+                    // Find race name span and append badge after it
+                    const rows=document.querySelectorAll(`a[onclick*="${rid}"] .flex.items-center.gap-1`);
+                    if(rows.length){const s=document.createElement('span');s.setAttribute('data-conf-id',rid);s.innerHTML=badge;rows[0].appendChild(s);}
+                  }
                   // Update cache
                   for(const s of scheduleCache[ds]||[]){for(const r of s.races){if(r.raceId===rid)r.confidence=cf;}}
                 }
@@ -349,13 +353,7 @@ function renderDay(schedules,ds){
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':conf?'bg-amber-50 text-amber-700 border border-amber-300':'bg-gray-100 text-navy-800'}">
                   ${r.raceNumber}R
                 </div>
-                <div class="flex-1 min-w-0 ml-2.5">
-                  <div class="flex items-start gap-1.5 flex-wrap">
-                    <span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
-                    ${g}${conf?`<span data-conf-id="${r.raceId}">${conf}</span>`:`<span data-conf-id="${r.raceId}" style="display:none"></span>`}
-                  </div>
-                  <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
-                </div>
+                <div class="flex-1 min-w-0 ml-2.5"><div class="flex items-center gap-1"><span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 truncate">${r.raceName||r.raceNumber+'R'}</span>${g}${conf?`<span data-conf-id="${r.raceId}">${conf}</span>`:``}</div><div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div></div>
                 <svg class="w-3.5 h-3.5 text-gray-200 group-hover:text-navy-800 transition-colors shrink-0 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
               </a>`;}).join("")}
           </div>
