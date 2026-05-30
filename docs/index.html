@@ -218,7 +218,7 @@ async function loadAndRenderDay(ds){
                   // Update badge in DOM
                   const badge=cf==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>';
                   const el=document.querySelector(`[data-conf-id="${rid}"]`);
-                  if(el)el.innerHTML=badge;
+                  if(el){el.innerHTML=badge;el.style.display='';}
                   // Update cache
                   for(const s of scheduleCache[ds]||[]){for(const r of s.races){if(r.raceId===rid)r.confidence=cf;}}
                 }
@@ -352,7 +352,7 @@ function renderDay(schedules,ds){
                 <div class="flex-1 min-w-0 ml-2.5">
                   <div class="flex items-start gap-1.5 flex-wrap">
                     <span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
-                    ${g}<span data-conf-id="${r.raceId}">${conf}</span>
+                    ${g}${conf?`<span data-conf-id="${r.raceId}">${conf}</span>`:`<span data-conf-id="${r.raceId}" style="display:none"></span>`}
                   </div>
                   <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
                 </div>
