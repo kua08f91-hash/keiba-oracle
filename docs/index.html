@@ -201,35 +201,6 @@ async function loadAndRenderDay(ds){
         return{raceId:rid,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||"",confidence:confMap[rid]||""};
       }).sort((a,b)=>a.raceNumber-b.raceNumber)}));
       scheduleCache[ds]=sc;renderDay(sc,ds);
-      // Background: fetch confidence from API for races missing it
-      if(API){
-        const needConf=sc.flatMap(s=>s.races.filter(r=>!r.confidence).map(r=>r.raceId));
-        if(needConf.length>0){
-          (async()=>{
-            for(const rid of needConf){
-              try{
-                const cr=await fetch(`${API}/racecard/${rid}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-                if(!cr.ok)continue;
-                const cd=await cr.json();
-                const ps=(cd.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
-                let cf='';
-                if(ps.length>=2){const g=ps[0].score-ps[1].score;if(g>=10)cf='high';else if(g>=5)cf='mid';}
-                if(cf){
-                  // Update badge in DOM
-                  const badge=cf==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>';
-                  const el=document.querySelector(`[data-conf-id="${rid}"]`);
-                  if(el){el.innerHTML=badge;}else{
-                    // Find race name span and append badge after it
-                    const rows=document.querySelectorAll(`a[onclick*="${rid}"] .flex.items-center.gap-1`);
-                    if(rows.length){const s=document.createElement('span');s.setAttribute('data-conf-id',rid);s.innerHTML=badge;rows[0].appendChild(s);}
-                  }
-                  // Update cache
-                  for(const s of scheduleCache[ds]||[]){for(const r of s.races){if(r.raceId===rid)r.confidence=cf;}}
-                }
-              }catch(e){}
-            }
-          })();
-        }
       }
       return;
     }catch(e){console.warn("race-list API failed:",e);}
@@ -347,13 +318,12 @@ function renderDay(schedules,ds){
           </div>
           <div class="divide-y divide-gray-100">
             ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);
-              const conf=r.confidence==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':r.confidence==='mid'?'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>':'';
               return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
-                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':conf?'bg-amber-50 text-amber-700 border border-amber-300':'bg-gray-100 text-navy-800'}">
+                <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':'bg-gray-100 text-navy-800'}">
                   ${r.raceNumber}R
                 </div>
-                <div class="flex-1 min-w-0 ml-2.5"><div class="flex items-center gap-1"><span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 truncate">${r.raceName||r.raceNumber+'R'}</span>${g}${conf?`<span data-conf-id="${r.raceId}">${conf}</span>`:``}</div><div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div></div>
+                <div class="flex-1 min-w-0 ml-2.5"><span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900">${r.raceName||r.raceNumber+'R'}</span>${g?' '+g:''}<div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div></div>
                 <svg class="w-3.5 h-3.5 text-gray-200 group-hover:text-navy-800 transition-colors shrink-0 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
               </a>`;}).join("")}
           </div>
