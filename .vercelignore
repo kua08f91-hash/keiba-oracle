@@ -1,0 +1,11 @@
+data/
+backend/
+backtest/
+scripts/
+tests/
+*.db
+*.pkl
+*.pyc
+__pycache__
+node_modules
+.next
