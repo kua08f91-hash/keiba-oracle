@@ -201,7 +201,6 @@ async function loadAndRenderDay(ds){
         return{raceId:rid,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||"",confidence:confMap[rid]||""};
       }).sort((a,b)=>a.raceNumber-b.raceNumber)}));
       scheduleCache[ds]=sc;renderDay(sc,ds);
-      }
       return;
     }catch(e){console.warn("race-list API failed:",e);}
   }
