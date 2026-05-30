@@ -344,7 +344,6 @@ function renderDay(schedules,ds){
           <div class="divide-y divide-gray-100">
             ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);
               const conf=r.confidence==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':r.confidence==='mid'?'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>':'';
-              const confSlot=`<span data-conf-id="${r.raceId}">${conf}</span>`;
               return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':conf?'bg-amber-50 text-amber-700 border border-amber-300':'bg-gray-100 text-navy-800'}">
@@ -353,7 +352,7 @@ function renderDay(schedules,ds){
                 <div class="flex-1 min-w-0 ml-2.5">
                   <div class="flex items-start gap-1.5 flex-wrap">
                     <span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
-                    ${g}${confSlot?' '+confSlot:''}
+                    ${g}<span data-conf-id="${r.raceId}">${conf}</span>
                   </div>
                   <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
                 </div>
