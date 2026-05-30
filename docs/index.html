@@ -177,31 +177,69 @@ async function loadAndRenderDay(ds){
   if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
   el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
 
-  // Try static data first
+  // Build confidence map from static data (available instantly)
+  const confMap={};
   if(staticData){
     const dayData=staticData.find(d=>d.date===ds);
-    // Skip stale static data (>15min old) when API is available
-    const STALE_MS=48*60*60*1000; // 48時間（次回export前まで有効）
-    const exportedAt=window._perf?.exportedAt?new Date(window._perf.exportedAt).getTime():0;
-    const isStale=exportedAt>0&&(Date.now()-exportedAt)>STALE_MS;
-    if(dayData&&(!isStale||!API)){
-      // IMPORTANT: preserve raceInfo so gradeTag() can read raceInfo.grade
+    if(dayData){
+      for(const c of dayData.courses){
+        for(const r of c.races){
+          const preds=(r.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+          let conf='';
+          if(preds.length>=2){const gap=preds[0].score-preds[1].score;if(gap>=10)conf='high';else if(gap>=5)conf='mid';}
+          confMap[r.raceId]=conf;
+        }
+      }
+    }
+  }
+
+  // API first for race list
+  if(API){
+    try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(10000)});const data=await r.json();
+      const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>{
+        const rid=r.race_id||r.raceId;
+        return{raceId:rid,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||"",confidence:confMap[rid]||""};
+      }).sort((a,b)=>a.raceNumber-b.raceNumber)}));
+      scheduleCache[ds]=sc;renderDay(sc,ds);
+      // Background: fetch confidence from API for races missing it
+      if(API){
+        const needConf=sc.flatMap(s=>s.races.filter(r=>!r.confidence).map(r=>r.raceId));
+        if(needConf.length>0){
+          (async()=>{
+            for(const rid of needConf){
+              try{
+                const cr=await fetch(`${API}/racecard/${rid}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+                if(!cr.ok)continue;
+                const cd=await cr.json();
+                const ps=(cd.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
+                let cf='';
+                if(ps.length>=2){const g=ps[0].score-ps[1].score;if(g>=10)cf='high';else if(g>=5)cf='mid';}
+                if(cf){
+                  // Update badge in DOM
+                  const badge=cf==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>';
+                  const el=document.querySelector(`[data-conf-id="${rid}"]`);
+                  if(el)el.innerHTML=badge;
+                  // Update cache
+                  for(const s of scheduleCache[ds]||[]){for(const r of s.races){if(r.raceId===rid)r.confidence=cf;}}
+                }
+              }catch(e){}
+            }
+          })();
+        }
+      }
+      return;
+    }catch(e){console.warn("race-list API failed:",e);}
+  }
+
+  // Fallback: static data only
+  if(staticData){
+    const dayData=staticData.find(d=>d.date===ds);
+    if(dayData){
       const sc=dayData.courses.map(c=>({code:c.code,name:c.name,races:c.races.map(r=>{
-        // Calculate confidence from score gap between ◎ and ◯
-        let confidence='';
-        const preds=(r.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
-        if(preds.length>=2){const gap=preds[0].score-preds[1].score;if(gap>=10)confidence='high';else if(gap>=5)confidence='mid';}
-        return{raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,raceInfo:r.raceInfo||{},startTime:r.raceInfo?.startTime||"",confidence};
+        return{raceId:r.raceId,raceNumber:r.raceNumber,raceName:r.raceName,raceInfo:r.raceInfo||{},startTime:r.raceInfo?.startTime||"",confidence:confMap[r.raceId]||""};
       })}));
       scheduleCache[ds]=sc;renderDay(sc,ds);return;
     }
-  }
-  // Fallback: API (local or cloud)
-  if(API){
-    try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(8000)});const data=await r.json();
-      const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>({raceId:r.race_id||r.raceId,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||""})).sort((a,b)=>a.raceNumber-b.raceNumber)}));
-      scheduleCache[ds]=sc;renderDay(sc,ds);return;
-    }catch(e){}
   }
   el.innerHTML='<div class="bg-white rounded-xl shadow text-center py-12 text-gray-400">データ読み込み失敗</div>';
 }
@@ -306,6 +344,7 @@ function renderDay(schedules,ds){
           <div class="divide-y divide-gray-100">
             ${sc.races.map(r=>{const sp=isSpecial(r.raceName),g=gradeTag(r.raceName,r.raceInfo&&r.raceInfo.grade);
               const conf=r.confidence==='high'?'<span class="bg-red-500 text-white text-[8px] font-black px-1 py-0.5 rounded">自信</span>':r.confidence==='mid'?'<span class="bg-amber-400 text-white text-[8px] font-black px-1 py-0.5 rounded">注目</span>':'';
+              const confSlot=`<span data-conf-id="${r.raceId}">${conf}</span>`;
               return`
               <a onclick="showDetail('${r.raceId}')" class="flex items-center px-3 py-2 cursor-pointer transition-all group hover:bg-gray-50">
                 <div class="w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs shrink-0 ${g?'bg-navy-900 text-gold-400 shadow-sm':conf?'bg-amber-50 text-amber-700 border border-amber-300':'bg-gray-100 text-navy-800'}">
@@ -314,7 +353,7 @@ function renderDay(schedules,ds){
                 <div class="flex-1 min-w-0 ml-2.5">
                   <div class="flex items-start gap-1.5 flex-wrap">
                     <span class="font-bold text-[13px] sm:text-[12px] leading-tight text-navy-900 break-all">${r.raceName||r.raceNumber+'R'}</span>
-                    ${g}${conf?' '+conf:''}
+                    ${g}${confSlot?' '+confSlot:''}
                   </div>
                   <div class="text-[10px] text-gray-400 mt-0.5">${r.startTime?r.startTime+'発走':''}</div>
                 </div>
