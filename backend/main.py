@@ -367,9 +367,13 @@ def get_race_card(race_id: str):
         finally:
             db.close()
 
-    # Fetch live odds — always try for latest data, persist to DB on success
+    # Always fetch live odds on race day for accurate predictions
+    # On non-race-day, only fetch if odds are missing
+    race_date = data["race_info"].get("date", "")
+    today = now_jst().strftime("%Y%m%d")
+    is_race_day = race_date == today
     no_odds = sum(1 for e in entries if e.get("odds") is None and not e.get("isScratched"))
-    if no_odds > 0:
+    if is_race_day or no_odds > 0:
         live_odds = _fetch_live_win_odds(race_id)
         if live_odds:
             _apply_odds_to_entries(entries, live_odds)
@@ -473,10 +477,22 @@ def get_optimized_bets(race_id: str):
         raise HTTPException(status_code=404, detail="Race not found.")
 
     try:
-        predictions = predictor.predict(data["race_info"], data["entries"])
+        # Always fetch live odds on race day
+        entries = data["entries"]
+        race_date = data["race_info"].get("date", "")
+        today = now_jst().strftime("%Y%m%d")
+        is_race_day = race_date == today
+        no_odds = sum(1 for e in entries if e.get("odds") is None and not e.get("isScratched"))
+        if is_race_day or no_odds > 0:
+            live_odds = _fetch_live_win_odds(race_id)
+            if live_odds:
+                _apply_odds_to_entries(entries, live_odds)
+                _save_odds_to_db(race_id, live_odds)
+
+        predictions = predictor.predict(data["race_info"], entries)
 
         from backend.scraper.odds import estimate_from_entries
-        odds_data = estimate_from_entries(data["entries"]) or {}
+        odds_data = estimate_from_entries(entries) or {}
         try:
             odds_data = _fetch_live_combination_odds(race_id, odds_data)
         except Exception:
