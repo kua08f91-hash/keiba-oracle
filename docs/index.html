@@ -385,7 +385,7 @@ async function loadRaceDetail(id){
       }
       renderBets();
       usedApi=true;
-      _startOddsPolling(id);
+      if(!c.frozen){_startOddsPolling(id);}
     }catch(e){
       console.warn("API failed, falling back to static:", e);
     }
@@ -435,6 +435,18 @@ async function _refreshLiveOdds(raceId){
     const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
     if(!r.ok)return;
     const data=await r.json();
+    // Frozen race — use frozen data and stop polling
+    if(data.frozen){
+      dE=data.entries||[];dP=data.predictions||[];
+      renderDetail(data.raceInfo||{},"");
+      try{
+        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;}
+      }catch(e){}
+      renderBets();
+      _stopOddsPolling();
+      return;
+    }
     const liveEntries=data.entries||[];
     const livePreds=data.predictions||[];
     if(!liveEntries.length||liveEntries.length<dE.length*0.5||liveEntries.length>dE.length+2)return;
