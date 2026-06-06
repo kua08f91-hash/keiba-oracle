@@ -40,3 +40,6 @@ coverage.json
 *.json.bak
 .vercel
 backtest/cache/
+data/backup/
+data/backtest_backup/
+scripts/*.pkl
