@@ -54,7 +54,7 @@ def fetch_live_combination_odds(race_id: str, fallback_odds: dict = None, includ
             r = requests.get(url, headers={
                 **API_HEADERS,
                 "Referer": f"https://race.netkeiba.com/odds/index.html?race_id={race_id}",
-            }, timeout=5)
+            }, timeout=15)
             d = _json.loads(r.text)
             data = d.get("data", {})
             if not isinstance(data, dict):

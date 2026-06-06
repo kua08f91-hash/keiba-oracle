@@ -491,14 +491,16 @@ async function _refreshLiveOdds(raceId){
     }
     // Update predictions
     if(livePreds.length>0){dP=livePreds;updated++;}
-    if(updated>0){
-      renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
-      try{
-        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;}
-      }catch(e2){}
-      renderBets();
-    }
+    // Always refresh bets + render (even if odds unchanged, combination odds may have shifted)
+    renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
+    try{
+      const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;
+        const pb=document.getElementById("detail-pattern");
+        if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
+      }
+    }catch(e2){}
+    renderBets();
   }catch(e){}
 }
 

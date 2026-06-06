@@ -193,35 +193,20 @@ class TestRacecardFrozenCache:
 
         assert resp.json()["updatedAt"] == ts
 
-    def test_db_entry_odds_are_overlaid_onto_entries(self):
-        """Frozen path must overlay DB HorseEntry.odds onto the returned entries."""
+    def test_frozen_returns_cached_predictions(self):
+        """Frozen path must return cached predictions without DB overlay."""
         cached = _make_cached(frozen=True)
         fetch_data = _make_fetch_race_card_data(entry_count=3)
-
-        # Simulate two DB HorseEntry rows with fresh odds
-        he1 = MagicMock()
-        he1.horse_number = 1
-        he1.odds = 3.7
-        he1.popularity = 1
-
-        he2 = MagicMock()
-        he2.horse_number = 2
-        he2.odds = 6.5
-        he2.popularity = 2
-
-        db_session = _make_mock_db_session(horse_entries=[he1, he2])
 
         with (
             patch("backend.main._get_cached_predictions", return_value=cached),
             patch("backend.main.fetch_race_card", return_value=fetch_data),
-            patch("backend.main.get_session", return_value=db_session),
         ):
             resp = client.get(f"/api/racecard/{RACE_ID}")
 
-        entries = {e["horseNumber"]: e for e in resp.json()["entries"]}
-        assert entries[1]["odds"] == pytest.approx(3.7)
-        assert entries[1]["popularity"] == 1
-        assert entries[2]["odds"] == pytest.approx(6.5)
+        data = resp.json()
+        assert data["frozen"] is True
+        assert data["predictions"] == cached["predictions"]
 
 
 # ===========================================================================
@@ -460,8 +445,12 @@ class TestOptimizedBetsFrozenCache:
     def test_frozen_cache_returns_200_with_frozen_true(self):
         """Frozen cache: HTTP 200 with frozen=True."""
         cached = _make_cached(frozen=True)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.status_code == 200
@@ -471,8 +460,12 @@ class TestOptimizedBetsFrozenCache:
         """Frozen cache: the bets field equals the cached bets exactly."""
         cached_bets = [{"type": "wide", "horses": [3, 7], "odds": 18.5}]
         cached = _make_cached(frozen=True, bets=cached_bets)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.json()["bets"] == cached_bets
@@ -482,7 +475,11 @@ class TestOptimizedBetsFrozenCache:
         longshot = {"type": "sanrentan", "horses": [4, 9, 12], "odds": 280.0}
         cached = _make_cached(frozen=True, longshot=longshot)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.json()["longshot"] == longshot
@@ -490,8 +487,12 @@ class TestOptimizedBetsFrozenCache:
     def test_frozen_cache_returns_pattern_from_cache(self):
         """Frozen cache: pattern field is taken from DB cache."""
         cached = _make_cached(frozen=True, pattern="upset")
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.json()["pattern"] == "upset"
@@ -500,29 +501,39 @@ class TestOptimizedBetsFrozenCache:
         """Frozen cache: updatedAt equals the cache timestamp."""
         ts = "2026-04-27T07:55:00"
         cached = _make_cached(frozen=True, updated_at=ts)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.json()["updatedAt"] == ts
 
-    def test_frozen_cache_does_not_call_fetch_race_card(self):
-        """Frozen cache: fetch_race_card (live scrape) must not be called."""
+    def test_frozen_cache_skips_live_odds_fetch(self):
+        """Frozen cache: _fetch_live_win_odds must not be called."""
         cached = _make_cached(frozen=True)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
         with (
             patch("backend.main._get_cached_predictions", return_value=cached),
-            patch("backend.main.fetch_race_card") as mock_frc,
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main._fetch_live_win_odds") as mock_odds,
         ):
             client.get(f"/api/optimized-bets/{RACE_ID}")
 
-        mock_frc.assert_not_called()
+        mock_odds.assert_not_called()
 
     def test_frozen_cache_returns_correct_race_id(self):
         """raceId in the response must equal the requested race_id."""
         cached = _make_cached(frozen=True)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
 
-        with patch("backend.main._get_cached_predictions", return_value=cached):
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+        ):
             resp = client.get(f"/api/optimized-bets/{RACE_ID}")
 
         assert resp.json()["raceId"] == RACE_ID

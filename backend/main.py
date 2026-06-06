@@ -316,22 +316,19 @@ def get_race_list(date: str):
     return schedules
 
 
-@app.get("/api/racecard/{race_id}")
-def get_race_card(race_id: str):
-    """Get race card with predictions for a given race ID.
+def _compute_live(race_id: str, include_bets: bool = False):
+    """Core computation: fetch data + live odds + predictions + optional bets.
 
-    Priority: DB cache (from realtime_worker) → live computation fallback.
+    Single source of truth for odds — used by racecard, optimized-bets, and
+    auto-freeze. Ensures predictions and bets always use the same odds snapshot.
     """
-    if not race_id or len(race_id) < 10:
-        raise HTTPException(status_code=400, detail="Invalid race ID.")
-
     data = fetch_race_card(race_id)
     if not data:
-        raise HTTPException(status_code=404, detail="Race not found or scraping failed.")
+        return None
 
     entries = data["entries"]
 
-    # If DB returned stale data (too few or too many entries), force re-scrape
+    # If DB returned stale data, force re-scrape
     non_scratched = [e for e in entries if not e.get("isScratched")]
     head_count = data["race_info"].get("headCount", 0)
     needs_refresh = (
@@ -345,30 +342,21 @@ def get_race_card(race_id: str):
             data["entries"] = entries
             data["race_info"] = data2["race_info"]
 
-    # Only use DB cache if frozen (predictions locked before race)
+    # Check frozen cache
     cached = _get_cached_predictions(race_id)
     if cached and cached.get("frozen"):
-        db = get_session()
-        try:
-            db_entries = db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all()
-            for he in db_entries:
-                for e in entries:
-                    if e["horseNumber"] == he.horse_number and he.odds:
-                        e["odds"] = he.odds
-                        e["popularity"] = he.popularity
-            return {
-                "raceInfo": data["race_info"],
-                "entries": entries,
-                "predictions": cached["predictions"],
-                "frozen": True,
-                "updatedAt": cached["updated_at"],
-            }
-            # DB cache incomplete — fall through to live computation
-        finally:
-            db.close()
+        return {
+            "raceInfo": data["race_info"],
+            "entries": entries,
+            "predictions": cached["predictions"],
+            "bets": cached.get("bets", []),
+            "longshot": cached.get("longshot"),
+            "pattern": cached.get("pattern", ""),
+            "frozen": True,
+            "updatedAt": cached["updated_at"],
+        }
 
-    # Always fetch live odds on race day for accurate predictions
-    # On non-race-day, only fetch if odds are missing
+    # Fetch live win odds (single fetch for both predictions and bets)
     race_date = data["race_info"].get("date", "")
     today = now_jst().strftime("%Y%m%d")
     is_race_day = race_date == today
@@ -379,20 +367,29 @@ def get_race_card(race_id: str):
             _apply_odds_to_entries(entries, live_odds)
             _save_odds_to_db(race_id, live_odds)
 
+    # Predict with live-odds-injected entries
     predictions = predictor.predict(data["race_info"], entries)
 
-    # API-level auto-freeze: if within 7 min of post, freeze predictions now
-    if _should_auto_freeze(race_id):
+    # Compute bets if requested or if auto-freeze needed
+    bets = []
+    longshot = None
+    pattern = ""
+    should_freeze = _should_auto_freeze(race_id)
+
+    if include_bets or should_freeze:
         from backend.scraper.odds import estimate_from_entries
         odds_data = estimate_from_entries(entries) or {}
         try:
             odds_data = _fetch_live_combination_odds(race_id, odds_data)
         except Exception:
             pass
+
         bets = optimize_bets(predictions, odds_data, data["race_info"])
-        head_count = data["race_info"].get("headCount", 16)
-        probs = scores_to_probabilities(predictions, head_count)
+
+        hc = data["race_info"].get("headCount", 16)
+        probs = scores_to_probabilities(predictions, hc)
         pattern = detect_race_pattern(probs)
+
         import random
         rng = random.Random(42)
         cands = generate_candidates(probs, top_n=min(5, len(probs)))
@@ -408,21 +405,36 @@ def get_race_card(race_id: str):
                 c["odds"] = round(est, 1)
                 c["ev"] = c["hitProb"] * est - 1
         longshot = pick_longshot(cands, bets, probs)
-        _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
-        return {
-            "raceInfo": data["race_info"],
-            "entries": entries,
-            "predictions": predictions,
-            "frozen": True,
-            "updatedAt": None,
-        }
+
+        if should_freeze:
+            _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
 
     return {
         "raceInfo": data["race_info"],
         "entries": entries,
         "predictions": predictions,
-        "frozen": False,
+        "bets": bets,
+        "longshot": longshot,
+        "pattern": pattern,
+        "frozen": should_freeze if (include_bets or should_freeze) else False,
         "updatedAt": None,
+    }
+
+
+@app.get("/api/racecard/{race_id}")
+def get_race_card(race_id: str):
+    """Get race card with predictions. Uses same odds as optimized-bets."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+    result = _compute_live(race_id, include_bets=False)
+    if not result:
+        raise HTTPException(status_code=404, detail="Race not found or scraping failed.")
+    return {
+        "raceInfo": result["raceInfo"],
+        "entries": result["entries"],
+        "predictions": result["predictions"],
+        "frozen": result["frozen"],
+        "updatedAt": result["updatedAt"],
     }
 
 
@@ -452,89 +464,23 @@ def get_odds(race_id: str):
 
 @app.get("/api/optimized-bets/{race_id}")
 def get_optimized_bets(race_id: str):
-    """Get optimized betting suggestions for a race.
-
-    Priority: DB cache (from realtime_worker) → live computation fallback.
-    """
+    """Get optimized betting suggestions. Uses same odds snapshot as racecard."""
     if not race_id or len(race_id) < 10:
         raise HTTPException(status_code=400, detail="Invalid race ID.")
-
-    # Only use DB cache if frozen (predictions locked before race)
-    cached = _get_cached_predictions(race_id)
-    if cached and cached.get("frozen"):
-        return {
-            "bets": cached["bets"],
-            "longshot": cached["longshot"],
-            "pattern": cached["pattern"],
-            "raceId": race_id,
-            "frozen": True,
-            "updatedAt": cached["updated_at"],
-        }
-
-    # Live computation with real-time odds
-    data = fetch_race_card(race_id)
-    if not data:
-        raise HTTPException(status_code=404, detail="Race not found.")
-
     try:
-        # Always fetch live odds on race day
-        entries = data["entries"]
-        race_date = data["race_info"].get("date", "")
-        today = now_jst().strftime("%Y%m%d")
-        is_race_day = race_date == today
-        no_odds = sum(1 for e in entries if e.get("odds") is None and not e.get("isScratched"))
-        if is_race_day or no_odds > 0:
-            live_odds = _fetch_live_win_odds(race_id)
-            if live_odds:
-                _apply_odds_to_entries(entries, live_odds)
-                _save_odds_to_db(race_id, live_odds)
-
-        predictions = predictor.predict(data["race_info"], entries)
-
-        from backend.scraper.odds import estimate_from_entries
-        odds_data = estimate_from_entries(entries) or {}
-        try:
-            odds_data = _fetch_live_combination_odds(race_id, odds_data)
-        except Exception:
-            pass
-
-        bets = optimize_bets(predictions, odds_data, data["race_info"])
-
-        head_count = data["race_info"].get("headCount", 16)
-        probs = scores_to_probabilities(predictions, head_count)
-        pattern = detect_race_pattern(probs)
-
-        import random
-        rng = random.Random(42)
-        all_candidates = generate_candidates(probs, top_n=min(5, len(probs)))
-        finishes = monte_carlo_finish(probs, 5000, rng=rng)
-        all_candidates = estimate_hit_probabilities(finishes, all_candidates)
-        for c in all_candidates:
-            oi = find_odds_for_bet(c, odds_data)
-            if oi:
-                c["odds"] = oi["odds"]
-                c["payout"] = oi["payout"]
-                c["ev"] = c["hitProb"] * oi["odds"] - 1.0
-            else:
-                est = implied_fair_odds(c["hitProb"])
-                c["odds"] = round(est, 1)
-                c["payout"] = int(est * 100)
-                c["ev"] = c["hitProb"] * est - 1.0
-        longshot = pick_longshot(all_candidates, bets, probs)
-
-        # API-level auto-freeze
-        is_frozen = _should_auto_freeze(race_id)
-        if is_frozen:
-            _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
-
+        result = _compute_live(race_id, include_bets=True)
+        if not result:
+            raise HTTPException(status_code=404, detail="Race not found.")
         return {
-            "bets": bets,
-            "longshot": longshot,
-            "pattern": pattern,
+            "bets": result["bets"],
+            "longshot": result["longshot"],
+            "pattern": result["pattern"],
             "raceId": race_id,
-            "frozen": is_frozen,
-            "updatedAt": None,
+            "frozen": result["frozen"],
+            "updatedAt": result["updatedAt"],
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error in optimized-bets for %s: %s", race_id, e)
         return {"bets": [], "pattern": "", "raceId": race_id}
