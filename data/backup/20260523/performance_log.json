@@ -1,0 +1,54 @@
+[
+  {
+    "date": "2026-04-04",
+    "type": "live_result",
+    "races": 24,
+    "investment": 57500,
+    "payout": 24500,
+    "roi": 42.6,
+    "hits_early": "中山1-2R, 阪神1-2R",
+    "issue": "blend ratio changed to 30/70 during race day, rank-based normalization lost probability gaps",
+    "fix": "reverted to validated 60/40 blend + min-max normalization, retrained with 4/4 data (1131 races)"
+  },
+  {
+    "date": "2026-04-04",
+    "type": "live_corrected",
+    "races": 24,
+    "investment": 60000,
+    "payout": 52900,
+    "roi": 88.2,
+    "note": "backtest model 60/40, 単勝ROI 556.8%, 連系全滅"
+  },
+  {
+    "date": "2026-04-05",
+    "type": "live",
+    "races": 24,
+    "investment": 60000,
+    "payout": 86100,
+    "roi": 143.5,
+    "note": "3連複ROI 190.9%, 全券種プラス(3連単除く). Parser bug fixed."
+  },
+  {
+    "date": "2026-04-11",
+    "type": "live",
+    "races": 36,
+    "investment": 107000,
+    "payout": 93200,
+    "roi": 87.1,
+    "note": "Top5 ROI103.6%, longshot 0/34"
+  },
+  {
+    "date": "2026-04-12",
+    "type": "live",
+    "races": 36,
+    "investment": 106000,
+    "payout": 73300,
+    "roi": 69.2,
+    "note": "Top5 ROI63.6%, longshot 1/32 (阪神3R ¥16,050)"
+  },
+  {
+    "date": "2026-04-13",
+    "type": "retrain",
+    "note": "1227 races, diversify optimized: wide/tansho priority, longshot tightened (hitP>=0.5%, odds<=100x)"
+  }
+]
