@@ -1557,14 +1557,14 @@ class TestS8Strategy:
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert any(b["type"] == "umaren" for b in bets), "umaren at 50x must be selected"
 
-    def test_umaren_below_20_rejected(self):
-        """umaren at 19x (below 20x minimum) must be excluded."""
+    def test_umaren_below_15_rejected(self):
+        """umaren at 14x (below 15x minimum) must be excluded."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"umaren": [self._odds_entry([1, 2], 19.0)]}
+        odds_data = {"umaren": [self._odds_entry([1, 2], 14.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert not any(b["type"] == "umaren" for b in bets), (
-            "umaren at 19x (below range) must be excluded"
+            "umaren at 14x (below range) must be excluded"
         )
 
     def test_umaren_above_100_rejected(self):
