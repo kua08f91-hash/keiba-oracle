@@ -396,6 +396,19 @@ def optimize_bets(
     if head_count < 3:
         return []
 
+    # Skip filter: conditions where Top-7 capture rate drops below 60%
+    # Based on 3,000R analysis: ◎odds 4-8x + 16+ head count → 59.2% capture
+    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
+    top1_odds = 0
+    if ai_sorted:
+        top1_hn = ai_sorted[0].get("horseNumber")
+        for e in (entries or []):
+            if e.get("horseNumber") == top1_hn and e.get("odds"):
+                top1_odds = e["odds"]
+                break
+    if top1_odds >= 4 and top1_odds < 8 and head_count >= 16:
+        return []  # SKIP: low capture rate condition
+
     probs = scores_to_probabilities(predictions, head_count)
     if len(probs) < 3:
         return []
