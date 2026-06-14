@@ -545,7 +545,7 @@ function renderDetail(info,pat){
     <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
       <div class="bg-navy-900 px-4 py-2.5 flex items-center justify-between">
         <h2 class="text-gold-400 font-black text-sm tracking-wide">AI OPTIMAL BETS</h2>
-        <div class="flex items-center gap-1.5"><span id="bet-confidence"></span><span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span></div>
+        <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
       </div>
       <div id="bets" class="divide-y divide-gray-100"></div>
       <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ AI予想は参考情報です。購入は自己責任でお願いします。</div>
@@ -592,13 +592,6 @@ function renderTable(){
 
 let _betConfidence='B';
 function renderBets(){
-  // Update bet confidence badge
-  const bcEl=document.getElementById('bet-confidence');
-  if(bcEl){
-    const bc=_betConfidence;
-    const bcMap={'A':'<span class="bg-green-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded">強く推奨</span>','B':'<span class="bg-blue-400 text-white text-[9px] font-black px-1.5 py-0.5 rounded">推奨</span>','C':'<span class="bg-gray-400 text-white text-[9px] font-black px-1.5 py-0.5 rounded">様子見</span>'};
-    bcEl.innerHTML=bcMap[bc]||bcMap['B'];
-  }
   const bets=dB;if(!bets||!bets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';return;}
   const rc=["from-gold-400 to-gold-600","from-gray-300 to-gray-400","from-amber-300 to-amber-500","from-gray-200 to-gray-300","from-gray-200 to-gray-300"];
   const tc={tansho:"bg-red-100 text-red-700",fukusho:"bg-blue-100 text-blue-700",umaren:"bg-purple-100 text-purple-700",wide:"bg-teal-100 text-teal-700",sanrenpuku:"bg-emerald-100 text-emerald-700",sanrentan:"bg-orange-100 text-orange-700"};
