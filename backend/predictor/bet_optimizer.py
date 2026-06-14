@@ -396,18 +396,6 @@ def optimize_bets(
     if head_count < 3:
         return []
 
-    # Skip filter: conditions where Top-7 capture rate drops below 60%
-    # Based on 3,000R analysis: ◎odds 4-8x + 16+ head count → 59.2% capture
-    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
-    top1_odds = 0
-    if ai_sorted:
-        top1_hn = ai_sorted[0].get("horseNumber")
-        for e in (entries or []):
-            if e.get("horseNumber") == top1_hn and e.get("odds"):
-                top1_odds = e["odds"]
-                break
-    if top1_odds >= 4 and top1_odds < 8 and head_count >= 16:
-        return []  # SKIP: low capture rate condition
 
     probs = scores_to_probabilities(predictions, head_count)
     if len(probs) < 3:
@@ -665,3 +653,53 @@ def detect_race_pattern(probs: Dict[int, float]) -> str:
         return "2強対決"
     else:
         return "標準配置"
+
+
+def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = None) -> str:
+    """Evaluate whether this race is a good bet opportunity.
+
+    Returns confidence level based on 3,000R analysis:
+      "A" (強く推奨): Top-7 capture rate >90% — high confidence
+      "B" (推奨):     Top-7 capture rate 70-90% — normal confidence
+      "C" (様子見):   Top-7 capture rate <70% — consider skipping
+
+    Based on:
+      - ◎ odds: 1-2x super-favorite + small field → 94.2% (A)
+      - ◎ odds: 4-8x mid-odds + 16+ heads → 59.2% (C)
+      - Score concentration: high → 96.8% (A)
+    """
+    head_count = race_info.get("headCount", 16)
+    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
+    if not ai_sorted:
+        return "B"
+
+    # Get ◎ odds
+    top1_odds = 0.0
+    top1_hn = ai_sorted[0].get("horseNumber")
+    if entries:
+        for e in entries:
+            if e.get("horseNumber") == top1_hn and e.get("odds"):
+                top1_odds = e["odds"]
+                break
+
+    # Score concentration (top3 / total)
+    scores = [p.get("score", 0) for p in ai_sorted if p.get("score", 0) > 0]
+    if len(scores) >= 3:
+        concentration = sum(scores[:3]) / sum(scores)
+    else:
+        concentration = 1.0
+
+    # C: Skip condition — mid-odds + large field
+    if top1_odds >= 4 and top1_odds < 8 and head_count >= 16:
+        return "C"
+
+    # A: Strong buy conditions
+    if top1_odds > 0 and top1_odds < 2 and head_count < 12:
+        return "A"
+    if concentration >= 0.4:
+        return "A"
+    if top1_odds > 0 and top1_odds < 3 and head_count < 14:
+        return "A"
+
+    # B: Normal
+    return "B"

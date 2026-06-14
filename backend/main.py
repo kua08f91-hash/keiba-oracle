@@ -32,6 +32,7 @@ from backend.predictor.bet_optimizer import (
     optimize_bets, detect_race_pattern, scores_to_probabilities,
     generate_candidates, monte_carlo_finish, estimate_hit_probabilities,
     find_odds_for_bet, implied_fair_odds, pick_longshot,
+    evaluate_bet_confidence,
 )
 
 app = FastAPI(title="JRA Prediction API")
@@ -409,6 +410,8 @@ def _compute_live(race_id: str, include_bets: bool = False):
         if should_freeze:
             _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
 
+    bet_conf = evaluate_bet_confidence(predictions, data["race_info"], entries)
+
     return {
         "raceInfo": data["race_info"],
         "entries": entries,
@@ -416,6 +419,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
         "bets": bets,
         "longshot": longshot,
         "pattern": pattern,
+        "betConfidence": bet_conf,
         "frozen": should_freeze if (include_bets or should_freeze) else False,
         "updatedAt": None,
     }
@@ -475,6 +479,7 @@ def get_optimized_bets(race_id: str):
             "bets": result["bets"],
             "longshot": result["longshot"],
             "pattern": result["pattern"],
+            "betConfidence": result.get("betConfidence", "B"),
             "raceId": race_id,
             "frozen": result["frozen"],
             "updatedAt": result["updatedAt"],
