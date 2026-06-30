@@ -450,13 +450,31 @@ def optimize_bets(
         c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
         viable.append(c)
 
-    # Sort by highest odds (most value potential)
-    viable.sort(key=lambda x: -x["odds"])
+    # Prioritize ◎-anchor umatan (◎ as 1st horse)
+    # Analysis: when ◎ wins (69% in A-rank), 89% of 2nd place is in Top7
+    # ◎-anchor umatan captures this directly
+    honmei_hn = ai_sorted[0]["horseNumber"] if ai_sorted else None
+    viable_honmei_umatan = [c for c in viable if c["type"] == "umatan" and c["horses"][0] == honmei_hn]
+    viable_other = [c for c in viable if not (c["type"] == "umatan" and c["horses"][0] == honmei_hn)]
 
-    # Select with per-type limit
+    # Sort each group by highest odds
+    viable_honmei_umatan.sort(key=lambda x: -x["odds"])
+    viable_other.sort(key=lambda x: -x["odds"])
+
+    # Select: ◎-anchor umatan first (up to TYPE_MAX), then fill with others
     selected = []
     type_counts = {}
-    for c in viable:
+    for c in viable_honmei_umatan:
+        bt = c["type"]
+        if type_counts.get(bt, 0) >= TYPE_MAX:
+            break
+        selected.append(c)
+        type_counts[bt] = type_counts.get(bt, 0) + 1
+        if len(selected) >= max_bets:
+            break
+    for c in viable_other:
+        if len(selected) >= max_bets:
+            break
         bt = c["type"]
         if type_counts.get(bt, 0) >= TYPE_MAX:
             continue
