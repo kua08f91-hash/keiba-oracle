@@ -265,8 +265,8 @@ def generate_candidates(
                     "horses": list(pair), "ordered": False,
                 })
 
-    # ── 馬単: top 5 ordered pairs (was top 4) ──
-    for h1, h2 in permutations(top_horses[:5], 2):
+    # ── 馬単: top_n ordered pairs (D2: top 7 for ◎-anchor coverage) ──
+    for h1, h2 in permutations(top_horses[:top_n], 2):
         candidates.append({
             "type": "umatan", "typeLabel": "馬単",
             "horses": [h1, h2], "ordered": True,

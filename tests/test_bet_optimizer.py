@@ -1641,45 +1641,45 @@ class TestS8Strategy:
 
     # ── 5. Bets must involve at least one AI top-5 horse ─────────────────────
 
-    def test_all_bets_involve_ai_top5_horse(self):
-        """Every returned bet must contain at least one horse from AI top-5."""
+    def test_all_bets_involve_ai_top7_horse(self):
+        """Every returned bet must contain at least one horse from AI top-7 (D2)."""
         from backend.predictor.bet_optimizer import optimize_bets
-        predictions = self._make_predictions(8)
-        # scores: horse 1=82, 2=74, 3=66, 4=58, 5=50, 6=42, 7=34, 8=26
-        # AI top-5 = {1, 2, 3, 4, 5}
-        ai_top5 = {1, 2, 3, 4, 5}
+        predictions = self._make_predictions(10)
+        # scores: horse 1=90, 2=82, ..., 7=42, 8=34, 9=26, 10=18
+        # AI top-7 = {1, 2, 3, 4, 5, 6, 7}
+        ai_top7 = {1, 2, 3, 4, 5, 6, 7}
         odds_data = {
             "umatan": [
-                self._odds_entry([1, 2], 50.0),   # top-5 horse 1: qualifies
-                self._odds_entry([6, 7], 80.0),   # no top-5 horse: must be rejected
+                self._odds_entry([1, 2], 50.0),   # top-7 horse 1: qualifies
+                self._odds_entry([8, 9], 80.0),   # no top-7 horse: must be rejected
             ],
             "umaren": [
-                self._odds_entry([2, 3], 30.0),   # top-5 horses: qualifies
-                self._odds_entry([7, 8], 35.0),   # no top-5: must be rejected
+                self._odds_entry([2, 3], 20.0),   # top-7 horses: qualifies
+                self._odds_entry([9, 10], 25.0),  # no top-7: must be rejected
             ],
             "wide": [
-                self._odds_entry([4, 5], 15.0),   # top-5 horses: qualifies
-                self._odds_entry([6, 8], 20.0),   # no top-5: must be rejected
+                self._odds_entry([4, 5], 15.0),   # top-7 horses: qualifies
+                self._odds_entry([8, 10], 20.0),  # no top-7: must be rejected
             ],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         for bet in bets:
             horse_set = set(bet["horses"])
-            assert horse_set & ai_top5, (
-                f"Bet {bet['type']} horses={bet['horses']} has no AI top-5 horse"
+            assert horse_set & ai_top7, (
+                f"Bet {bet['type']} horses={bet['horses']} has no AI top-7 horse"
             )
 
-    def test_bet_with_no_ai_top5_horse_excluded(self):
-        """A bet whose horses are exclusively outside AI top-5 must not be returned."""
+    def test_bet_with_no_ai_top7_horse_excluded(self):
+        """A bet whose horses are exclusively outside AI top-7 must not be returned."""
         from backend.predictor.bet_optimizer import optimize_bets
-        predictions = self._make_predictions(8)
-        # Only provide an out-of-top-5 combination (horses 6 & 7)
+        predictions = self._make_predictions(10)
+        # Only provide an out-of-top-7 combination (horses 8 & 9)
         odds_data = {
-            "umaren": [self._odds_entry([6, 7], 30.0)],
+            "umaren": [self._odds_entry([8, 9], 20.0)],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert all(b["type"] != "umaren" for b in bets), (
-            "umaren with only non-top-5 horses (6,7) must be excluded"
+            "umaren with only non-top-7 horses (8,9) must be excluded"
         )
 
     def test_bet_with_one_ai_top5_horse_is_sufficient(self):
@@ -1997,8 +1997,8 @@ class TestS8Strategy:
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         # All returned bets must pass every filter.
-        ai_top5 = {1, 2, 3, 4, 5}
-        value_ranges = {"umatan": (20.0, 300.0), "umaren": (20.0, 100.0), "wide": (10.0, 50.0)}
+        ai_top7 = {1, 2, 3, 4, 5, 6, 7}
+        value_ranges = {"umatan": (50.0, 300.0), "umaren": (15.0, 30.0), "wide": (10.0, 30.0)}
         for bet in bets:
             bt = bet["type"]
             assert bt in value_ranges, f"Disallowed type: {bt}"
@@ -2006,8 +2006,8 @@ class TestS8Strategy:
             assert lo <= bet["odds"] <= hi, (
                 f"{bt} odds {bet['odds']} outside range [{lo}, {hi}]"
             )
-            assert set(bet["horses"]) & ai_top5, (
-                f"{bt} {bet['horses']} has no AI top-5 horse"
+            assert set(bet["horses"]) & ai_top7, (
+                f"{bt} {bet['horses']} has no AI top-7 horse"
             )
 
     def test_result_is_list_of_dicts_with_required_fields(self):
