@@ -105,7 +105,13 @@ class WeightedScoringModel(PredictionModel):
         self._market_weight = market_weight if market_weight is not None else MARKET_WEIGHT
         self._analytical_weight = 1.0 - self._market_weight
 
-    def predict(self, race_info: dict, entries: list[dict]) -> list[dict]:
+    def predict(self, race_info: dict, entries: list[dict], external_adjustments: dict = None) -> list[dict]:
+        """Predict scores for all entries.
+
+        Args:
+            external_adjustments: Optional dict {horseName: adjustment_score} from
+                text analysis. Applied as post-hoc score modifier (-10 to +10).
+        """
         surface = race_info.get("surface", "芝")
         distance = race_info.get("distance", 2000)
         head_count = len([e for e in entries if not e.get("isScratched")])
@@ -208,6 +214,14 @@ class WeightedScoringModel(PredictionModel):
                 "mark": "",
                 "factors": {k: round(v, 1) for k, v in d["factors"].items()},
             })
+
+        # Apply external adjustments (from text analysis)
+        if external_adjustments:
+            for pred in predictions:
+                horse_name = pred.get("horseName", "")
+                adj = external_adjustments.get(horse_name, 0)
+                if adj:
+                    pred["score"] = max(0, min(100, pred["score"] + adj))
 
         # Sort and assign marks
         active = [p for p in predictions if p["score"] > 0]

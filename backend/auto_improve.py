@@ -372,6 +372,27 @@ def main():
         except Exception as e2:
             print(f"  Fallback optimization also failed: {e2}")
 
+    # Step 6: AI weight adjustment suggestions (Claude Fable 5)
+    print("\n[6/6] Generating AI weight adjustment suggestions...")
+    try:
+        from backend.llm.analyzer import suggest_weight_adjustments, is_available
+        if is_available() and metrics:
+            from backend.predictor.scoring import ANALYTICAL_WEIGHTS
+            suggestions = suggest_weight_adjustments(metrics, dict(ANALYTICAL_WEIGHTS))
+            if suggestions:
+                suggestions_path = os.path.join(DATA_DIR, "weight_suggestions.json")
+                with open(suggestions_path, "w", encoding="utf-8") as f:
+                    json.dump(suggestions, f, ensure_ascii=False, indent=2)
+                print(f"  Saved {len(suggestions.get('suggestions', []))} suggestions to {suggestions_path}")
+                if suggestions.get("summary"):
+                    print(f"  Summary: {suggestions['summary']}")
+            else:
+                print("  No suggestions generated")
+        else:
+            print("  Skipped (API key not set or no metrics)")
+    except Exception as e:
+        print(f"  AI suggestions failed: {e}")
+
     # Summary
     print(f"\n{'='*60}")
     print(f"  Pipeline complete")

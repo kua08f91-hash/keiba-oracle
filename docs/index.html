@@ -364,7 +364,7 @@ async function loadRaceDetail(id){
       renderDetail(c.raceInfo,"");
       // Apply bets from parallel fetch
       if(br&&br.ok){
-        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';
+        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -450,7 +450,7 @@ async function _refreshLiveOdds(raceId){
       renderDetail(data.raceInfo||{},"");
       try{
         const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';}
+        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}}
       }catch(e){}
       renderBets();
       _stopOddsPolling();
@@ -504,7 +504,7 @@ async function _refreshLiveOdds(raceId){
     renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
     try{
       const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';
+      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -549,6 +549,13 @@ function renderDetail(info,pat){
       </div>
       <div id="bets" class="divide-y divide-gray-100"></div>
       <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ AI予想は参考情報です。購入は自己責任でお願いします。</div>
+    </div>
+    <div id="ai-analysis" class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden mt-3" style="display:none">
+      <div class="bg-navy-900 px-4 py-2 flex items-center gap-2">
+        <svg class="w-4 h-4 text-gold-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        <h2 class="text-gold-400 font-black text-xs tracking-wide">AI RACE ANALYSIS</h2>
+      </div>
+      <div id="ai-analysis-text" class="px-4 py-3 text-[12px] text-gray-700 leading-relaxed"></div>
     </div>
   </div>`;
   renderTable();renderBets();

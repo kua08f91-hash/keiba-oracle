@@ -102,6 +102,7 @@ def _get_cached_predictions(race_id: str):
             "longshot": json.loads(cache.longshot_json) if cache.longshot_json else None,
             "pattern": cache.pattern or "",
             "frozen": cache.frozen,
+            "analysis": cache.analysis_text or "",
             "updated_at": cache.updated_at.isoformat() if cache.updated_at else None,
         }
     except Exception:
@@ -412,6 +413,27 @@ def _compute_live(race_id: str, include_bets: bool = False):
 
     bet_conf = evaluate_bet_confidence(predictions, data["race_info"], entries)
 
+    # Generate AI analysis (only when computing bets, not on every poll)
+    analysis = ""
+    if include_bets:
+        from backend.llm.analyzer import generate_race_analysis, is_available
+        if is_available():
+            analysis = generate_race_analysis(data["race_info"], entries, predictions)
+            # Save analysis to DB cache
+            if analysis:
+                db = get_session()
+                try:
+                    cache = db.query(PredictionsCache).filter(
+                        PredictionsCache.race_id == race_id
+                    ).first()
+                    if cache:
+                        cache.analysis_text = analysis
+                        db.commit()
+                except Exception:
+                    db.rollback()
+                finally:
+                    db.close()
+
     return {
         "raceInfo": data["race_info"],
         "entries": entries,
@@ -420,9 +442,59 @@ def _compute_live(race_id: str, include_bets: bool = False):
         "longshot": longshot,
         "pattern": pattern,
         "betConfidence": bet_conf,
+        "analysis": analysis,
         "frozen": should_freeze if (include_bets or should_freeze) else False,
         "updatedAt": None,
     }
+
+
+@app.get("/api/analysis/{race_id}")
+def get_analysis(race_id: str):
+    """Get AI analysis text for a race (cached or generated)."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+
+    # Check DB cache first
+    db = get_session()
+    try:
+        cache = db.query(PredictionsCache).filter(
+            PredictionsCache.race_id == race_id
+        ).first()
+        if cache and cache.analysis_text:
+            return {"analysis": cache.analysis_text, "source": "cache", "raceId": race_id}
+    finally:
+        db.close()
+
+    # Generate on-demand
+    from backend.llm.analyzer import generate_race_analysis, is_available
+    if not is_available():
+        return {"analysis": "", "source": "unavailable", "raceId": race_id}
+
+    data = fetch_race_card(race_id)
+    if not data:
+        return {"analysis": "", "source": "no_data", "raceId": race_id}
+
+    predictions = predictor.predict(data["race_info"], data["entries"])
+    analysis = generate_race_analysis(data["race_info"], data["entries"], predictions)
+
+    # Cache result
+    if analysis:
+        db = get_session()
+        try:
+            cache = db.query(PredictionsCache).filter(
+                PredictionsCache.race_id == race_id
+            ).first()
+            if not cache:
+                cache = PredictionsCache(race_id=race_id)
+                db.add(cache)
+            cache.analysis_text = analysis
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+
+    return {"analysis": analysis, "source": "generated", "raceId": race_id}
 
 
 @app.get("/api/racecard/{race_id}")
@@ -480,6 +552,7 @@ def get_optimized_bets(race_id: str):
             "longshot": result["longshot"],
             "pattern": result["pattern"],
             "betConfidence": result.get("betConfidence", "B"),
+            "analysis": result.get("analysis", ""),
             "raceId": race_id,
             "frozen": result["frozen"],
             "updatedAt": result["updatedAt"],
@@ -489,6 +562,25 @@ def get_optimized_bets(race_id: str):
     except Exception as e:
         logger.error("Error in optimized-bets for %s: %s", race_id, e)
         return {"bets": [], "pattern": "", "raceId": race_id}
+
+
+@app.post("/api/analyze-text/{race_id}")
+def analyze_text(race_id: str, body: dict):
+    """Analyze free-form text (news, paddock) and extract signals."""
+    if not race_id or len(race_id) < 10:
+        raise HTTPException(status_code=400, detail="Invalid race ID.")
+    text = body.get("text", "")
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required.")
+
+    from backend.llm.analyzer import analyze_external_text, is_available
+    if not is_available():
+        return {"signals": [], "summary": "", "source": "unavailable"}
+
+    data = fetch_race_card(race_id)
+    race_info = data["race_info"] if data else {}
+    result = analyze_external_text(text, race_info)
+    return result
 
 
 @app.get("/api/race-dates")

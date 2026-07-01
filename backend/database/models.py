@@ -84,6 +84,7 @@ class PredictionsCache(Base):
     longshot_json = Column(Text, nullable=True)
     pattern = Column(String, default="")
     frozen = Column(Boolean, default=False)
+    analysis_text = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
