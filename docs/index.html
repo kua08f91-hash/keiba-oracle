@@ -349,15 +349,34 @@ async function loadRaceDetail(id){
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
 
-  // Always try API first — parallel fetch racecard + bets for speed
+  // Show static data instantly while API loads in background
+  let usedStatic=false;
+  if(staticData){
+    for(const day of staticData){
+      for(const course of day.courses){
+        const race=course.races.find(r=>r.raceId===id);
+        if(race){
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          renderDetail(race.raceInfo,race.pattern||"");
+          const pb=document.getElementById("detail-pattern");
+          if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
+          renderBets();
+          usedStatic=true;
+          break;
+        }
+      }
+      if(usedStatic)break;
+    }
+  }
+
+  // Then fetch latest from API to overwrite with live odds
   let usedApi = false;
   if(API){
     try{
       const t=Date.now();
-      // Parallel fetch: racecard + optimized-bets simultaneously
       const [cr, br] = await Promise.all([
-        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(20000)}),
-        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(20000)}).catch(()=>null),
+        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)}),
+        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)}).catch(()=>null),
       ]);
       if(!cr.ok)throw Error("API error");
       const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
@@ -400,24 +419,12 @@ async function loadRaceDetail(id){
     }
   }
 
-  // Fallback: static data (only when API unavailable)
-  if(!usedApi){
-    if(staticData){
-      for(const day of staticData){
-        for(const course of day.courses){
-          const race=course.races.find(r=>r.raceId===id);
-          if(race){
-            dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
-            renderDetail(race.raceInfo,race.pattern||"");
-            const pb=document.getElementById("detail-pattern");
-            if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
-            renderBets();
-            if(API){_startOddsPolling(id);}
-            return;
-          }
-        }
-      }
-    }
+  // If API failed but static data was already shown, start polling to retry
+  if(!usedApi && usedStatic){
+    if(API){_startOddsPolling(id);}
+  }
+  // If nothing was shown at all, show error
+  if(!usedApi && !usedStatic){
     el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;
   }
 }
