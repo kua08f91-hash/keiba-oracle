@@ -11,25 +11,44 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+MAX_INPUT_TEXT_LENGTH = 5000  # Max characters for external text analysis
 _client = None
+_client_lock = __import__("threading").Lock()
 
 
 def _get_client():
-    """Get or create Anthropic client. Returns None if API key not set."""
+    """Get or create Anthropic client. Thread-safe. Returns None if API key not set."""
     global _client
     if _client is not None:
         return _client
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return None
-    try:
-        import anthropic
-        _client = anthropic.Anthropic(api_key=api_key)
-        return _client
-    except Exception as e:
-        logger.warning("Failed to initialize Anthropic client: %s", e)
-        return None
+    with _client_lock:
+        if _client is not None:
+            return _client
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return None
+        try:
+            import anthropic
+            _client = anthropic.Anthropic(api_key=api_key)
+            return _client
+        except Exception as e:
+            logger.warning("Failed to initialize Anthropic client: %s", e)
+            return None
+
+
+def _strip_markdown_fence(text: str) -> str:
+    """Strip markdown code fences from LLM response."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line (```json or ```)
+        lines = lines[1:]
+        # Remove last line if it's ```
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return text.strip()
 
 
 def is_available() -> bool:
@@ -153,12 +172,8 @@ JSONのみ出力してください。""" % (
         )
         text = response.content[0].text.strip()
 
-        # Parse JSON from response
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        result = json.loads(text)
+        # Parse JSON from response (strip markdown fences)
+        result = json.loads(_strip_markdown_fence(text))
         logger.info("Generated %d weight suggestions", len(result.get("suggestions", [])))
         return result
 
@@ -174,10 +189,14 @@ def analyze_external_text(text: str, race_info: dict) -> dict:
     """Extract structured signals from free-form Japanese text.
 
     Returns dict with signals list, or empty dict if unavailable.
+    Text is truncated to MAX_INPUT_TEXT_LENGTH to control API costs.
     """
     client = _get_client()
     if not client:
         return {}
+
+    # Truncate to prevent excessive API costs
+    text = text[:MAX_INPUT_TEXT_LENGTH]
 
     try:
         race_name = race_info.get("raceName", "")
@@ -208,12 +227,7 @@ JSONのみ出力してください。""" % (race_name, text)
             messages=[{"role": "user", "content": prompt}],
         )
         resp_text = response.content[0].text.strip()
-
-        if resp_text.startswith("```"):
-            resp_text = resp_text.split("```")[1]
-            if resp_text.startswith("json"):
-                resp_text = resp_text[4:]
-        result = json.loads(resp_text)
+        result = json.loads(_strip_markdown_fence(resp_text))
         logger.info("Extracted %d signals from text", len(result.get("signals", [])))
         return result
 

@@ -414,25 +414,37 @@ def _compute_live(race_id: str, include_bets: bool = False):
     bet_conf = evaluate_bet_confidence(predictions, data["race_info"], entries)
 
     # Generate AI analysis (only when computing bets, not on every poll)
+    # Check cache first to avoid redundant LLM API calls
     analysis = ""
     if include_bets:
-        from backend.llm.analyzer import generate_race_analysis, is_available
-        if is_available():
-            analysis = generate_race_analysis(data["race_info"], entries, predictions)
-            # Save analysis to DB cache
-            if analysis:
-                db = get_session()
-                try:
-                    cache = db.query(PredictionsCache).filter(
-                        PredictionsCache.race_id == race_id
-                    ).first()
-                    if cache:
-                        cache.analysis_text = analysis
-                        db.commit()
-                except Exception:
-                    db.rollback()
-                finally:
-                    db.close()
+        db = get_session()
+        try:
+            cache = db.query(PredictionsCache).filter(
+                PredictionsCache.race_id == race_id
+            ).first()
+            if cache and cache.analysis_text:
+                analysis = cache.analysis_text
+        except Exception:
+            pass
+        finally:
+            db.close()
+        if not analysis:
+            from backend.llm.analyzer import generate_race_analysis, is_available
+            if is_available():
+                analysis = generate_race_analysis(data["race_info"], entries, predictions)
+                if analysis:
+                    db = get_session()
+                    try:
+                        cache = db.query(PredictionsCache).filter(
+                            PredictionsCache.race_id == race_id
+                        ).first()
+                        if cache:
+                            cache.analysis_text = analysis
+                            db.commit()
+                    except Exception:
+                        db.rollback()
+                    finally:
+                        db.close()
 
     return {
         "raceInfo": data["race_info"],
@@ -572,6 +584,8 @@ def analyze_text(race_id: str, body: dict):
     text = body.get("text", "")
     if not text:
         raise HTTPException(status_code=400, detail="Text is required.")
+    if len(text) > 5000:
+        raise HTTPException(status_code=400, detail="Text too long (max 5000 chars).")
 
     from backend.llm.analyzer import analyze_external_text, is_available
     if not is_available():
