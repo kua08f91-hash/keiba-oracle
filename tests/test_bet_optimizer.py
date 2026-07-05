@@ -2615,17 +2615,17 @@ class TestD1BimodalStrategy:
 
     # ── 3. Dead-zone exclusion: umatan at 35x (below 50x minimum) ────────────
 
-    def test_umatan_dead_zone_35x_excluded(self):
-        """umatan at 35x is below the 50x minimum and must be excluded.
+    def test_umatan_35x_accepted_in_d3(self):
+        """umatan at 35x is within the D3 range (30-300x) and must be accepted.
 
-        The D1 high-odds zone for umatan starts at 50x; 35x is in the dead zone.
+        D3 lowered umatan minimum from 50x to 30x to close the dead zone.
         """
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 35.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert not any(b["type"] == "umatan" for b in bets), (
-            "umatan at 35x is below the 50x D1 minimum; must be excluded"
+        assert any(b["type"] == "umatan" for b in bets), (
+            "umatan at 35x is within the D3 range (30-300x); must be accepted"
         )
 
     # ── 4. Bimodal: low-odds umaren accepted ─────────────────────────────────
@@ -2707,41 +2707,34 @@ class TestD1BimodalStrategy:
 
     # ── 9. umatan at 49.9x excluded (below 50x minimum) ─────────────────────
 
-    def test_umatan_49x_excluded(self):
-        """umatan at 49.9x is below the 50x D1 minimum and must be excluded.
-
-        49.9x is just inside the dead zone, not yet in the high-odds zone.
-        """
+    def test_umatan_29x_excluded(self):
+        """umatan at 29.9x is below the D3 30x minimum and must be excluded."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        odds_data = {"umatan": [self._odds_entry([1, 2], 49.9)]}
+        odds_data = {"umatan": [self._odds_entry([1, 2], 29.9)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert not any(b["type"] == "umatan" for b in bets), (
-            "umatan at 49.9x is below the 50x threshold; must be excluded"
+            "umatan at 29.9x is below the D3 30x threshold; must be excluded"
         )
 
     # ── 10. No bets when all odds in dead zone ────────────────────────────────
 
-    def test_no_bets_when_all_odds_in_dead_zone(self):
-        """optimize_bets returns an empty list when every entry is in the 30-50x dead zone.
+    def test_no_bets_when_all_odds_outside_ranges(self):
+        """optimize_bets returns empty when umaren/wide are above max and umatan below min.
 
-        Dead zone entries for all three D1 types:
-          umaren 35x, 40x, 45x  — all above 30x umaren max
-          wide   35x, 40x, 45x  — all above 30x wide max
-          umatan 35x, 40x, 45x  — all below 50x umatan min
-        None of these fall inside a valid D1 range, so zero bets are returned.
+        D3 ranges: umatan 30-300, umaren 15-30, wide 10-30.
+        All entries here are outside these ranges.
         """
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
-        dead_zone_odds = [35.0, 40.0, 45.0]
         odds_data = {
-            "umaren": [self._odds_entry([1, 2], o) for o in dead_zone_odds],
-            "wide":   [self._odds_entry([1, 2], o) for o in dead_zone_odds],
-            "umatan": [self._odds_entry([1, 2], o) for o in dead_zone_odds],
+            "umaren": [self._odds_entry([1, 2], o) for o in [35.0, 40.0, 45.0]],
+            "wide":   [self._odds_entry([1, 2], o) for o in [35.0, 40.0, 45.0]],
+            "umatan": [self._odds_entry([1, 2], o) for o in [5.0, 10.0, 20.0]],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         assert bets == [], (
-            f"All odds are in the 30-50x dead zone; expected empty result, got {bets}"
+            f"All odds are outside valid ranges; expected empty result, got {bets}"
         )
 
 

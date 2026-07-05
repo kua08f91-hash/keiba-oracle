@@ -381,13 +381,13 @@ def optimize_bets(
         entries: Optional race entries (for 枠連 frame data)
         mc_samples: MC simulation samples (used for hitProb display only).
     """
-    # D2: expanded candidate pool for higher big-hit frequency
-    # Based on 3,000R simulation: top7 + lower umaren → ROI 137%, hit 6.5%
-    # Key: top7 expands umatan candidates from 10 combos to 21 combos (+110%)
+    # D3: close 30-50x dead zone for umatan to capture +5.3% more ◎-win cases
+    # Analysis (793 A-rank ◎-win cases): 30-50x zone has 5.3% of wins missed by D2
+    # Lowering umatan 50x→30x doubles capturable ◎-win umatan (5.2%→10.5%)
     VALUE_RANGES = {
-        "umatan": (50.0, 300.0),   # High-odds only (real odds produce 50x+ from top7 combos)
-        "umaren": (15.0, 30.0),    # Lowered from 20x → 15x for +5% hit rate
-        "wide": (10.0, 30.0),      # Unchanged (already capturing most hits)
+        "umatan": (30.0, 300.0),   # Lowered from 50x → 30x to close dead zone
+        "umaren": (15.0, 30.0),    # Unchanged from D2
+        "wide": (10.0, 30.0),      # Unchanged from D2
     }
     VALUE_AI_TOP_N = 7  # Expanded from 5 → 7 for more umatan candidates
     TYPE_MAX = 2  # Max bets per type
