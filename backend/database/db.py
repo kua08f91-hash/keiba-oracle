@@ -51,6 +51,28 @@ def init_db():
     if str(engine.url).startswith("sqlite"):
         os.makedirs(DATA_DIR, exist_ok=True)
     Base.metadata.create_all(engine)
+    # Auto-migrate: add missing columns to existing tables (SQLite only)
+    if str(engine.url).startswith("sqlite"):
+        _auto_migrate_sqlite()
+
+
+def _auto_migrate_sqlite():
+    """Add missing columns to existing SQLite tables."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    for table_name, table in Base.metadata.tables.items():
+        if not insp.has_table(table_name):
+            continue
+        existing_cols = {col['name'] for col in insp.get_columns(table_name)}
+        for col in table.columns:
+            if col.name not in existing_cols:
+                col_type = col.type.compile(engine.dialect)
+                with engine.connect() as conn:
+                    conn.execute(text(
+                        "ALTER TABLE %s ADD COLUMN %s %s" % (table_name, col.name, col_type)
+                    ))
+                    conn.commit()
+                logger.info("Auto-migrated: %s.%s (%s)", table_name, col.name, col_type)
 
 
 def get_session() -> Session:
