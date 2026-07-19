@@ -390,11 +390,15 @@ class RealtimeWorker:
                 if mins <= 7 and not self.is_frozen(rid):
                     # Freeze point — final odds update then lock
                     logger.info("%s%2dR: Final update + FREEZE (%.0fmin)", course, rnum, mins)
-                    win_odds = self.fetch_win_odds(rid)
-                    combo_odds = self.fetch_combination_odds(rid)
-                    if win_odds:
-                        self.save_odds_to_db(rid, win_odds, combo_odds)
-                    self.generate_and_save_predictions(rid)
+                    try:
+                        win_odds = self.fetch_win_odds(rid)
+                        combo_odds = self.fetch_combination_odds(rid)
+                        if win_odds:
+                            self.save_odds_to_db(rid, win_odds, combo_odds)
+                        self.generate_and_save_predictions(rid)
+                    except Exception as e:
+                        logger.warning("%s%2dR: Scrape failed at freeze time (%s), freezing with cached data", course, rnum, e)
+                    # Always freeze regardless of scrape success
                     self.freeze_race(rid)
                     continue
 
