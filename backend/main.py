@@ -344,9 +344,19 @@ def _compute_live(race_id: str, include_bets: bool = False):
             data["entries"] = entries
             data["race_info"] = data2["race_info"]
 
-    # Check frozen cache
+    # Check frozen cache — return frozen data with frozen-time odds
     cached = _get_cached_predictions(race_id)
     if cached and cached.get("frozen"):
+        # Use DB odds (frozen at freeze time) instead of latest scraped odds
+        db = get_session()
+        try:
+            for he in db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all():
+                for e in entries:
+                    if e["horseNumber"] == he.horse_number and he.odds:
+                        e["odds"] = he.odds
+                        e["popularity"] = he.popularity
+        finally:
+            db.close()
         return {
             "raceInfo": data["race_info"],
             "entries": entries,
