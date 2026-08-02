@@ -349,13 +349,17 @@ async function loadRaceDetail(id){
   el.innerHTML='<div class="text-center py-16"><div class="animate-spin inline-block w-10 h-10 border-4 border-navy-800 border-t-gold-400 rounded-full mb-3"></div><p class="text-sm text-gray-400">Loading race data...</p></div>';
   sortS=false;expH=null;
 
-  // Show static data instantly while API loads in background
+  // Show static data instantly while API loads — but skip if race already started
+  // (post-race static data has stale odds that differ from frozen-time odds)
   let usedStatic=false;
   if(staticData){
     for(const day of staticData){
       for(const course of day.courses){
         const race=course.races.find(r=>r.raceId===id);
         if(race){
+          const st=race.raceInfo?.startTime||'';
+          const now=new Date();const nowHM=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+          if(st&&nowHM>st){break;}// Race started — skip static, wait for API frozen data
           dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
           renderDetail(race.raceInfo,race.pattern||"");
           const pb=document.getElementById("detail-pattern");
