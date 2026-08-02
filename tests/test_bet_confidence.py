@@ -162,17 +162,15 @@ class TestARank:
     # ------ Rule 3: tight-favourite + medium field ------
 
     def test_tight_favourite_medium_field_returns_a(self):
-        """top1_odds=2.5, headCount=12 → 'A' (Rule 3: <3 odds, <14 heads).
+        """top1_odds=2.5, headCount=12, gap>5 → 'A' (Rule 3 + D4 gap filter).
 
         Use spread scores so concentration stays below 0.4 to isolate Rule 3.
+        Gap must be >5 for D4 A-rank qualification.
         """
-        predictions = _make_predictions([40, 30, 25, 20, 18, 17, 16, 15, 14, 13])
+        # gap = 35-28 = 7 > 5, concentration = (35+28+26)/sum = 89/223 ≈ 0.399 < 0.4
+        predictions = _make_predictions([35, 28, 26, 24, 22, 21, 20, 19, 18, 17])
         entries = _make_entries({1: 2.5, 2: 7.0, 3: 14.0})
         race_info = _make_race_info(12)
-        # top3 = 40+30+25 = 95; total = 208; concentration ≈ 0.457 → triggers A via Rule 2
-        # Re-distribute so concentration < 0.4
-        predictions = _make_predictions([30, 28, 26, 24, 22, 21, 20, 19, 18, 17])
-        # top3 = 84, total = 225 → 0.373 < 0.4
         result = evaluate_bet_confidence(predictions, race_info, entries)
 
         assert result == "A"

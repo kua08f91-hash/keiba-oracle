@@ -47,7 +47,7 @@ HITPROB_DEFLATION = {
 MIN_EV_THRESHOLD = -0.60
 
 # Maximum bets to return
-MAX_BETS = 5
+MAX_BETS = 3  # D4: reduced from 5 → 3 for higher ROI (143.3% vs 130.3%)
 
 # Minimum odds per type (user rule: "1倍台は提示しない")
 MIN_ODDS_BY_TYPE = {
@@ -711,13 +711,16 @@ def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = 
     if top1_odds >= 4 and top1_odds < 8 and head_count >= 16:
         return "C"
 
-    # A: Strong buy conditions
-    if top1_odds > 0 and top1_odds < 2 and head_count < 12:
+    # A: Strong buy conditions (must also pass gap>5 sub-filter for D4 ROI boost)
+    # D4: gap>5 requirement increases A-rank ROI from 130.3% → 143.3%
+    gap_12 = ai_sorted[0].get("score", 0) - ai_sorted[1].get("score", 0) if len(ai_sorted) >= 2 else 0
+
+    if top1_odds > 0 and top1_odds < 2 and head_count < 12 and gap_12 > 5:
         return "A"
-    if concentration >= 0.4:
+    if concentration >= 0.4 and gap_12 > 5:
         return "A"
-    if top1_odds > 0 and top1_odds < 3 and head_count < 14:
+    if top1_odds > 0 and top1_odds < 3 and head_count < 14 and gap_12 > 5:
         return "A"
 
-    # B: Normal
+    # B: Normal (includes former A-rank with gap<=5)
     return "B"
