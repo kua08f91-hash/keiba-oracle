@@ -437,7 +437,7 @@ function _startOddsPolling(raceId){
   _currentOddsRaceId=raceId;
   _refreshLiveOdds(raceId);
   // Poll every 30 seconds while on detail page (captures late odds shifts)
-  _oddsTimer=setInterval(()=>_refreshLiveOdds(raceId),30000);
+  _oddsTimer=setInterval(()=>_refreshLiveOdds(raceId),15000);
 }
 
 function _stopOddsPolling(){
