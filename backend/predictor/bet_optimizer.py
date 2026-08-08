@@ -362,22 +362,24 @@ def find_odds_for_bet(bet: Dict, odds_data: Dict) -> Optional[Dict]:
 
 
 def kelly_bet_size(hit_prob: float, odds: float, bankroll: float = DEFAULT_BANKROLL) -> int:
-    """Calculate bet size using half-Kelly criterion.
+    """Calculate bet size as unit multiplier using half-Kelly criterion.
 
     f = ((b+1)*p - 1) / b where b = odds - 1, p = hit probability.
-    Returns bet amount in yen (rounded to 100), clamped to [KELLY_MIN_BET, KELLY_MAX_BET].
-    Returns 0 if Kelly f <= 0 (don't bet).
+    Returns unit multiplier (1-10): how many base units to bet.
+    1 = standard (¥500), 2 = double (¥1,000), etc.
+    Returns 1 if Kelly f <= 0 (minimum 1 unit).
     """
     if odds <= 1 or hit_prob <= 0:
-        return 0
+        return 1
     b = odds - 1.0
     f = ((b + 1) * hit_prob - 1) / b
     f_half = f * KELLY_FRACTION
     if f_half <= 0:
-        return 0
-    amount = bankroll * f_half
-    amount = max(KELLY_MIN_BET, min(int(amount / 100) * 100, KELLY_MAX_BET))
-    return amount
+        return 1
+    # Scale: f_half typically 0.01-0.10 → map to 1-10 units
+    # f_half * 100 gives percentage of bankroll → divide by 2 for unit count
+    units = max(1, min(int(f_half * 50 + 1), 10))
+    return units
 
 
 def implied_fair_odds(hit_prob: float) -> float:
