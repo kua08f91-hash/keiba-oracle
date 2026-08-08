@@ -484,6 +484,7 @@ class TestComputeLiveAnalysisCache:
         # Second session (write) returns a real cache row to update
         db_write = MagicMock()
         cache_row = MagicMock()
+        cache_row.frozen = False  # Not frozen, so analysis can be saved
         write_chain = MagicMock()
         write_chain.filter.return_value = write_chain
         write_chain.first.return_value = cache_row

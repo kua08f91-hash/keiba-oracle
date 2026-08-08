@@ -389,9 +389,26 @@ def _compute_live(race_id: str, include_bets: bool = False):
     predictions = predictor.predict(data["race_info"], entries)
 
     # Compute bets if requested or if auto-freeze needed
+    # But skip if already frozen in DB (prevents post-race recomputation)
     bets = []
     longshot = None
     pattern = ""
+    already_frozen = _get_cached_predictions(race_id)
+    if already_frozen and already_frozen.get("frozen"):
+        # Race was frozen by worker but _compute_live reached here
+        # (shouldn't happen normally, but guard against edge cases)
+        return {
+            "raceInfo": data["race_info"],
+            "entries": entries,
+            "predictions": already_frozen["predictions"],
+            "bets": already_frozen.get("bets", []),
+            "longshot": already_frozen.get("longshot"),
+            "pattern": already_frozen.get("pattern", ""),
+            "betConfidence": evaluate_bet_confidence(already_frozen["predictions"], data["race_info"], entries),
+            "analysis": already_frozen.get("analysis", ""),
+            "frozen": True,
+            "updatedAt": already_frozen["updated_at"],
+        }
     should_freeze = _should_auto_freeze(race_id)
 
     if include_bets or should_freeze:
@@ -454,7 +471,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
                         cache = db.query(PredictionsCache).filter(
                             PredictionsCache.race_id == race_id
                         ).first()
-                        if cache:
+                        if cache and not cache.frozen:
                             cache.analysis_text = analysis
                             db.commit()
                     except Exception:
@@ -512,11 +529,14 @@ def get_analysis(race_id: str):
             cache = db.query(PredictionsCache).filter(
                 PredictionsCache.race_id == race_id
             ).first()
-            if not cache:
-                cache = PredictionsCache(race_id=race_id)
-                db.add(cache)
-            cache.analysis_text = analysis
-            db.commit()
+            if cache and cache.frozen:
+                pass  # Never modify frozen cache
+            else:
+                if not cache:
+                    cache = PredictionsCache(race_id=race_id)
+                    db.add(cache)
+                cache.analysis_text = analysis
+                db.commit()
         except Exception:
             db.rollback()
         finally:

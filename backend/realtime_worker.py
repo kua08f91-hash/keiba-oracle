@@ -243,6 +243,10 @@ class RealtimeWorker:
         db = get_session()
         try:
             cache = db.query(PredictionsCache).filter(PredictionsCache.race_id == race_id).first()
+            # Never overwrite already-frozen data
+            if cache and cache.frozen:
+                logger.debug("Skipping prediction save for %s (already frozen)", race_id)
+                return
             if not cache:
                 cache = PredictionsCache(race_id=race_id)
                 db.add(cache)
