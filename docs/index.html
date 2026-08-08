@@ -455,14 +455,20 @@ async function _refreshLiveOdds(raceId){
     const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
     if(!r.ok)return;
     const data=await r.json();
-    // Frozen race — use frozen data and stop polling
+    // Frozen race — fetch bets first, then render everything at once to prevent flash
     if(data.frozen){
-      dE=data.entries||[];dP=data.predictions||[];
-      renderDetail(data.raceInfo||{},"");
+      let frozenBets=dB,frozenLongshot=dLongshot;
       try{
         const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-        if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}}
+        if(br.ok){const bd=await br.json();frozenBets=bd?.bets||[];frozenLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';
+          if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
+          const pb=document.getElementById("detail-pattern");
+          if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
+        }
       }catch(e){}
+      // Apply all frozen data at once — single render, no flash
+      dE=data.entries||[];dP=data.predictions||[];dB=frozenBets;dLongshot=frozenLongshot;
+      renderDetail(data.raceInfo||{},"");
       renderBets();
       _stopOddsPolling();
       return;
