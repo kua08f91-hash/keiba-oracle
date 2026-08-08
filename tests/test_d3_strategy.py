@@ -84,8 +84,8 @@ class TestD3UmatanBoundaries:
             "The accepted umatan bet should have odds == 30.0"
         )
 
-    # Test 2: 29.9x → rejected (below D3 minimum)
-    def test_umatan_at_29_9x_is_rejected(self):
+    # Test 2: 29.9x → accepted (D5 minimum is 5.0x, no upper limit)
+    def test_umatan_at_29_9x_is_accepted(self):
         from backend.predictor.bet_optimizer import optimize_bets
 
         bets = optimize_bets(
@@ -95,8 +95,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "umatan at 29.9x should be rejected (below D3 minimum of 30.0)"
+        assert len(umatan_bets) >= 1, (
+            "umatan at 29.9x should be accepted under D5 (above 5.0x minimum, no upper limit)"
         )
 
     # Test 3: 35.0x → accepted (was in dead zone under D2, now valid under D3)
@@ -161,8 +161,8 @@ class TestD3UmatanBoundaries:
             "umatan at 300.0x should be accepted (upper boundary, inclusive)"
         )
 
-    # Test 7: 300.1x → rejected (above maximum)
-    def test_umatan_at_300_1x_is_rejected(self):
+    # Test 7: 300.1x → accepted (D5 has no upper limit)
+    def test_umatan_at_300_1x_is_accepted(self):
         from backend.predictor.bet_optimizer import optimize_bets
 
         bets = optimize_bets(
@@ -172,8 +172,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "umatan at 300.1x should be rejected (above D3 maximum of 300.0)"
+        assert len(umatan_bets) >= 1, (
+            "umatan at 300.1x should be accepted under D5 (no upper limit)"
         )
 
 
@@ -256,8 +256,8 @@ class TestD3UnchangedRanges:
             "umaren at 15.0x should be accepted (lower boundary, inclusive, unchanged)"
         )
 
-    # Test 11: umaren at 14.9x → rejected (unchanged, below minimum)
-    def test_umaren_at_14_9x_is_rejected(self):
+    # Test 11: umaren at 14.9x → accepted under D5 (min is 3.0x, no upper limit)
+    def test_umaren_at_14_9x_is_accepted(self):
         from backend.predictor.bet_optimizer import optimize_bets
 
         odds_data = {
@@ -267,8 +267,8 @@ class TestD3UnchangedRanges:
         }
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umaren_bets = [b for b in bets if b["type"] == "umaren"]
-        assert len(umaren_bets) == 0, (
-            "umaren at 14.9x should be rejected (below D3 minimum of 15.0, unchanged)"
+        assert len(umaren_bets) >= 1, (
+            "umaren at 14.9x should be accepted under D5 (above 3.0x minimum, no upper limit)"
         )
 
     # Test 12: wide at 10.0x → accepted (unchanged lower boundary, inclusive)
@@ -301,8 +301,8 @@ class TestD3UnchangedRanges:
             "wide at 29.9x should be accepted (within D3 wide range 10-30, unchanged)"
         )
 
-    # Test 14: wide at 30.0x → rejected (unchanged, exclusive upper bound)
-    def test_wide_at_30x_is_rejected(self):
+    # Test 14: wide at 30.0x → accepted under D5 (min is 2.5x, no upper limit)
+    def test_wide_at_30x_is_accepted(self):
         from backend.predictor.bet_optimizer import optimize_bets
 
         odds_data = {
@@ -312,8 +312,8 @@ class TestD3UnchangedRanges:
         }
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         wide_bets = [b for b in bets if b["type"] == "wide"]
-        assert len(wide_bets) == 0, (
-            "wide at 30.0x should be rejected (upper bound is exclusive for wide, unchanged)"
+        assert len(wide_bets) >= 1, (
+            "wide at 30.0x should be accepted under D5 (above 2.5x minimum, no upper limit)"
         )
 
 
@@ -352,22 +352,22 @@ class TestD3ProducesMoreBetsThanD2:
             f"Only the D3-valid bets (35x, 45x) should appear, got {accepted_odds}"
         )
 
-    def test_d3_rejects_same_bets_if_odds_were_below_30x(self):
-        """Confirm the new floor is 30x — bets below it are still rejected."""
+    def test_d5_accepts_bets_above_5x_floor(self):
+        """D5 minimum for umatan is 5x — bets above 5x are accepted."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 25.0),   # D3: rejected (< 30x)
-                _odds_entry([1, 3], 29.9),   # D3: rejected (< 30x)
+                _odds_entry([1, 2], 25.0),   # D5: accepted (>= 5x)
+                _odds_entry([1, 3], 29.9),   # D5: accepted (>= 5x)
             ],
             "umaren": [],
             "wide": [],
         }
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "umatan below 30x should still be rejected even under D3"
+        assert len(umatan_bets) >= 1, (
+            "umatan at 25x and 29.9x should be accepted under D5 (above 5x minimum)"
         )
 
     def test_d3_combined_dead_zone_and_high_odds(self):

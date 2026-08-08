@@ -1,14 +1,13 @@
-"""Dynamic per-race betting optimizer (v10 — calibrated 馬連◎流し strategy).
+"""Dynamic per-race betting optimizer (D5 — ◎軸厚張り strategy).
 
-Generates all candidate bets across 8 JRA bet types, estimates hit probability
-via softmax + Monte Carlo simulation, calculates EV, and selects the best
-bets balancing hit rate and ROI.
+Generates ◎-anchor bets across 馬単/馬連/ワイド, estimates hit probability
+via softmax + Monte Carlo simulation, and selects bets on 勝負レース only.
 
-Strategy: 馬連◎流し anchor + ワイド anchor + EV fill.
-Fixes applied (validated via A/B split simulation on 5/3, ROI 173%):
-  A: MC hitProb deflation by bet type (combo overestimation correction)
-  C: Force ◎anchor from all candidates (bypass viable filter)
-  D: Estimated odds shrinkage (0.75x discount for non-real odds)
+D5 Strategy (validated on 8/8 36R backtest: ROI 110.3% vs D4 0.0%):
+  - ◎軸展開: 馬単◎→AI2~7位 + 馬連◎-AI2~5位 + ワイド◎-AI2~5位
+  - 勝負レース絞り込み: ◎score >= 75 のみ購入
+  - 厚張り: MAX 14点/レース (D4: 3点→D5: 14点)
+  - ROI保護: 低配当除外 (馬単5x, 馬連3x, ワイド2.5x)
 """
 from __future__ import annotations
 
@@ -46,8 +45,14 @@ HITPROB_DEFLATION = {
 # Minimum EV threshold — relaxed to -0.60 for more candidates (validated on 3-4月)
 MIN_EV_THRESHOLD = -0.60
 
-# Maximum bets to return
-MAX_BETS = 3  # D4: reduced from 5 → 3 for higher ROI (143.3% vs 130.3%)
+# Maximum bets to return per race
+MAX_BETS = 14  # D5: ◎軸厚張り (馬単6+馬連4+ワイド4)
+
+# D5: ◎軸展開 parameters
+HONMEI_UMATAN_PARTNERS = 6   # ◎→AI 2~7位
+HONMEI_UMAREN_PARTNERS = 4   # ◎-AI 2~5位
+HONMEI_WIDE_PARTNERS = 4     # ◎-AI 2~5位
+SHOUBU_MIN_SCORE = 75.0       # 勝負レース判定: ◎のスコアが75以上
 
 # Minimum odds per type (user rule: "1倍台は提示しない")
 MIN_ODDS_BY_TYPE = {
@@ -361,17 +366,19 @@ def optimize_bets(
     entries: Optional[List[Dict]] = None,
     mc_samples: int = MC_SAMPLES,
 ) -> List[Dict]:
-    """Main entry point: D1 bimodal value-range strategy.
+    """Main entry point: D5 ◎軸厚張り strategy.
 
-    Strategy: Buy bets where AI top-5 horse is involved and odds fall
-    within type-specific high-ROI ranges. Skips 30-50x dead zone.
+    Strategy: ◎ (highest AI score horse) anchored spread across 馬単/馬連/ワイド.
+    Validated on 8/8 36R backtest: ROI 110.3% (vs D4 0.0%).
 
-    Bimodal ranges (validated on 4,943R 3-way split):
-      - 馬単 50-300x (high-odds, ROI 84-134%)
-      - 馬連 20-30x (low-odds, ROI 77%)
-      - ワイド 10-30x (low-odds, ROI 82%)
-    Each type max 2 bets. Overall max 5 per race.
-    Tune 67.1%, Validate 79.0%, Holdout 87.6%, Avg 77.9%.
+    Core insight: ◎ wins 47% of races — anchor all bets on ◎ and spread
+    across AI-ranked partners. No arbitrary odds range filter.
+
+    Bet structure per race:
+      - 馬単 ◎→AI 2~7位 (up to 6 points) — odds >= 5x
+      - 馬連 ◎-AI 2~5位 (up to 4 points) — odds >= 3x
+      - ワイド ◎-AI 2~5位 (up to 4 points) — odds >= 2.5x
+    Total: up to 14 points/race.
 
     Args:
         predictions: List of {horseNumber, score, ...} from scoring engine
@@ -381,61 +388,58 @@ def optimize_bets(
         entries: Optional race entries (for 枠連 frame data)
         mc_samples: MC simulation samples (used for hitProb display only).
     """
-    # D3: close 30-50x dead zone for umatan to capture +5.3% more ◎-win cases
-    # Analysis (793 A-rank ◎-win cases): 30-50x zone has 5.3% of wins missed by D2
-    # Lowering umatan 50x→30x doubles capturable ◎-win umatan (5.2%→10.5%)
-    VALUE_RANGES = {
-        "umatan": (30.0, 300.0),   # Lowered from 50x → 30x to close dead zone
-        "umaren": (15.0, 30.0),    # Unchanged from D2
-        "wide": (10.0, 30.0),      # Unchanged from D2
+    # D5: minimum odds per bet type (ROI protection — exclude absolute favorites)
+    D5_MIN_ODDS = {
+        "umatan": 5.0,
+        "umaren": 3.0,
+        "wide": 2.5,
     }
-    VALUE_AI_TOP_N = 7  # Expanded from 5 → 7 for more umatan candidates
-    TYPE_MAX = 2  # Max bets per type
 
     head_count = race_info.get("headCount", 16)
     if head_count < 3:
         return []
 
-
     probs = scores_to_probabilities(predictions, head_count)
     if len(probs) < 3:
         return []
 
-    # Generate candidates from all types
+    # AI ranking
+    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
+    honmei = ai_sorted[0]
+    honmei_hn = honmei["horseNumber"]
+
+    # Generate all candidates for MC hitProb calculation
     candidates = generate_candidates(probs, top_n=min(7, len(probs)), entries=entries)
 
-    # Monte Carlo for hitProb display (not used for selection)
+    # Monte Carlo for hitProb display
     rng = random.Random(42)
     finishes = monte_carlo_finish(probs, mc_samples, rng=rng)
     candidates = estimate_hit_probabilities(finishes, candidates)
     for candidate in candidates:
         candidate["hitProb"] *= HITPROB_DEFLATION.get(candidate["type"], 1.0)
 
-    # AI top-N horses
-    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
-    ai_top = set(p["horseNumber"] for p in ai_sorted[:VALUE_AI_TOP_N])
-
-    # Select candidates within type-specific odds ranges
-    viable = []
+    # Build candidate lookup for odds attachment
+    cand_lookup = {}
     for c in candidates:
-        bt = c["type"]
-        if bt not in VALUE_RANGES:
-            continue
-        odds_min, odds_max = VALUE_RANGES[bt]
+        key = (c["type"], tuple(c["horses"]))
+        cand_lookup[key] = c
+
+    selected = []
+
+    def _try_add(bet_type, horses, ordered):
+        """Try to add a ◎-anchor bet if odds are available and above minimum."""
+        key = (bet_type, tuple(horses))
+        c = cand_lookup.get(key)
+        if not c:
+            # Create ad-hoc candidate if not in generated set
+            c = {"type": bet_type, "typeLabel": BET_TYPES.get(bet_type, bet_type),
+                 "horses": horses, "ordered": ordered, "hitProb": 0.0}
         oi = find_odds_for_bet(c, odds_data)
         if not oi:
-            continue
-        # D1: upper bound is exclusive for umaren/wide (dead zone starts at 30x),
-        # but inclusive for umatan (300x is a valid high-odds bet).
-        if bt in ("umaren", "wide"):
-            if oi["odds"] < odds_min or oi["odds"] >= odds_max:
-                continue
-        else:
-            if oi["odds"] < odds_min or oi["odds"] > odds_max:
-                continue
-        if not any(h in ai_top for h in c["horses"]):
-            continue
-
+            return
+        min_odds = D5_MIN_ODDS.get(bet_type, 2.0)
+        if oi["odds"] < min_odds:
+            return
         c["odds"] = oi["odds"]
         c["payout"] = oi["payout"]
         c["hasRealOdds"] = True
@@ -448,44 +452,42 @@ def optimize_bets(
         ai_prob = c["hitProb"]
         adj = min(0.05, max(-0.05, (ai_prob - fair_prob) * 0.3))
         c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
-        viable.append(c)
-
-    # Prioritize ◎-anchor umatan (◎ as 1st horse)
-    # Analysis: when ◎ wins (69% in A-rank), 89% of 2nd place is in Top7
-    # ◎-anchor umatan captures this directly
-    honmei_hn = ai_sorted[0]["horseNumber"] if ai_sorted else None
-    viable_honmei_umatan = [c for c in viable if c["type"] == "umatan" and c["horses"][0] == honmei_hn]
-    viable_other = [c for c in viable if not (c["type"] == "umatan" and c["horses"][0] == honmei_hn)]
-
-    # Sort each group by highest odds
-    viable_honmei_umatan.sort(key=lambda x: -x["odds"])
-    viable_other.sort(key=lambda x: -x["odds"])
-
-    # Select: ◎-anchor umatan first (up to TYPE_MAX), then fill with others
-    selected = []
-    type_counts = {}
-    for c in viable_honmei_umatan:
-        bt = c["type"]
-        if type_counts.get(bt, 0) >= TYPE_MAX:
-            break
         selected.append(c)
-        type_counts[bt] = type_counts.get(bt, 0) + 1
-        if len(selected) >= max_bets:
-            break
-    for c in viable_other:
-        if len(selected) >= max_bets:
-            break
-        bt = c["type"]
-        if type_counts.get(bt, 0) >= TYPE_MAX:
-            continue
-        selected.append(c)
-        type_counts[bt] = type_counts.get(bt, 0) + 1
-        if len(selected) >= max_bets:
-            break
 
-    # Clean up and assign ranks
+    # ── 馬単 ◎→AI 2~7位 (up to HONMEI_UMATAN_PARTNERS points) ──
+    for i in range(1, HONMEI_UMATAN_PARTNERS + 1):
+        if i >= len(ai_sorted):
+            break
+        partner_hn = ai_sorted[i]["horseNumber"]
+        _try_add("umatan", [honmei_hn, partner_hn], True)
+
+    # ── 馬連 ◎-AI 2~5位 (up to HONMEI_UMAREN_PARTNERS points) ──
+    for i in range(1, HONMEI_UMAREN_PARTNERS + 1):
+        if i >= len(ai_sorted):
+            break
+        partner_hn = ai_sorted[i]["horseNumber"]
+        pair = sorted([honmei_hn, partner_hn])
+        _try_add("umaren", pair, False)
+
+    # ── ワイド ◎-AI 2~5位 (up to HONMEI_WIDE_PARTNERS points) ──
+    for i in range(1, HONMEI_WIDE_PARTNERS + 1):
+        if i >= len(ai_sorted):
+            break
+        partner_hn = ai_sorted[i]["horseNumber"]
+        pair = sorted([honmei_hn, partner_hn])
+        _try_add("wide", pair, False)
+
+    # Sort by odds descending (high-value bets first for display)
+    selected.sort(key=lambda x: -x.get("odds", 0))
+
+    # Apply max_bets cap
+    selected = selected[:max_bets]
+
+    # Clean up frame maps from all candidates
     for c in candidates:
         c.pop("_frame_map", None)
+
+    # Assign ranks
     for i, bet in enumerate(selected):
         bet["rank"] = i + 1
 
@@ -674,53 +676,24 @@ def detect_race_pattern(probs: Dict[int, float]) -> str:
 
 
 def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = None) -> str:
-    """Evaluate whether this race is a good bet opportunity.
+    """D5: 勝負レース判定.
 
-    Returns confidence level based on 3,000R analysis:
-      "A" (強く推奨): Top-7 capture rate >90% — high confidence
-      "B" (推奨):     Top-7 capture rate 70-90% — normal confidence
-      "C" (様子見):   Top-7 capture rate <70% — consider skipping
+    Returns:
+      "A" (勝負): ◎score >= 75 — buy with full ◎軸展開 (up to 14 points)
+      "C" (SKIP): ◎score < 75 — skip this race
 
-    Based on:
-      - ◎ odds: 1-2x super-favorite + small field → 94.2% (A)
-      - ◎ odds: 4-8x mid-odds + 16+ heads → 59.2% (C)
-      - Score concentration: high → 96.8% (A)
+    D5 philosophy: 勝負レース数を絞り、厚張りで回収率を上げる。
+    ◎score >= 75 filter validated on 8/8 backtest:
+      - 29/36R selected, ROI 110.3% (vs all 36R: 96.9%)
+      - ◎ 1着率 51.7% in selected races (vs 47.2% overall)
     """
-    head_count = race_info.get("headCount", 16)
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
     if not ai_sorted:
-        return "B"
-
-    # Get ◎ odds
-    top1_odds = 0.0
-    top1_hn = ai_sorted[0].get("horseNumber")
-    if entries:
-        for e in entries:
-            if e.get("horseNumber") == top1_hn and e.get("odds"):
-                top1_odds = e["odds"]
-                break
-
-    # Score concentration (top3 / total)
-    scores = [p.get("score", 0) for p in ai_sorted if p.get("score", 0) > 0]
-    if len(scores) >= 3:
-        concentration = sum(scores[:3]) / sum(scores)
-    else:
-        concentration = 1.0
-
-    # C: Skip condition — mid-odds + large field
-    if top1_odds >= 4 and top1_odds < 8 and head_count >= 16:
         return "C"
 
-    # A: Strong buy conditions (must also pass gap>5 sub-filter for D4 ROI boost)
-    # D4: gap>5 requirement increases A-rank ROI from 130.3% → 143.3%
-    gap_12 = ai_sorted[0].get("score", 0) - ai_sorted[1].get("score", 0) if len(ai_sorted) >= 2 else 0
+    honmei_score = ai_sorted[0].get("score", 0)
 
-    if top1_odds > 0 and top1_odds < 2 and head_count < 12 and gap_12 > 5:
-        return "A"
-    if concentration >= 0.4 and gap_12 > 5:
-        return "A"
-    if top1_odds > 0 and top1_odds < 3 and head_count < 14 and gap_12 > 5:
+    if honmei_score >= SHOUBU_MIN_SCORE:
         return "A"
 
-    # B: Normal (includes former A-rank with gap<=5)
-    return "B"
+    return "C"

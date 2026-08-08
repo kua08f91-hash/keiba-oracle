@@ -108,8 +108,8 @@ class TestD2UmarenBoundary:
         )
         assert umaren_bets[0]["odds"] == 15.0
 
-    def test_umaren_at_14_9x_is_rejected(self):
-        """umaren odds = 14.9 is below 15.0 lower bound → not selected."""
+    def test_umaren_at_14_9x_is_accepted(self):
+        """umaren odds = 14.9 is above D5 minimum (3.0x) → accepted (no upper limit)."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         odds_data = {
@@ -120,8 +120,8 @@ class TestD2UmarenBoundary:
         bets = optimize_bets(self._PREDICTIONS, odds_data, _race_info(), mc_samples=100)
 
         umaren_bets = [b for b in bets if b["type"] == "umaren"]
-        assert len(umaren_bets) == 0, (
-            "umaren at 14.9x is below D2 minimum (15.0x) and should be rejected"
+        assert len(umaren_bets) >= 1, (
+            "umaren at 14.9x is above D5 minimum (3.0x) and should be accepted"
         )
 
     def test_umaren_at_20x_still_accepted(self):
@@ -138,8 +138,8 @@ class TestD2UmarenBoundary:
         umaren_bets = [b for b in bets if b["type"] == "umaren"]
         assert len(umaren_bets) >= 1, "20.0x was valid under D1 and should remain valid under D2"
 
-    def test_umaren_at_30x_is_rejected(self):
-        """umaren upper bound is exclusive: 30.0x → rejected."""
+    def test_umaren_at_30x_is_accepted(self):
+        """D5 has no upper limit for umaren: 30.0x → accepted (above 3x min)."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         odds_data = {
@@ -150,7 +150,7 @@ class TestD2UmarenBoundary:
         bets = optimize_bets(self._PREDICTIONS, odds_data, _race_info(), mc_samples=100)
 
         umaren_bets = [b for b in bets if b["type"] == "umaren"]
-        assert len(umaren_bets) == 0, "umaren at exactly 30.0x should be rejected (exclusive upper bound)"
+        assert len(umaren_bets) >= 1, "D5: umaren at 30.0x should be accepted (no upper limit, above 3x min)"
 
     def test_umaren_at_29_9x_is_accepted(self):
         """umaren at 29.9x is just below 30.0 upper exclusive bound → accepted."""
@@ -312,8 +312,8 @@ class TestD2MaxBetsEnforced:
 class TestD2TypeMaxEnforced:
     """TYPE_MAX=2 per bet type still enforced under D2 strategy."""
 
-    def test_at_most_2_umatan_bets(self):
-        """No more than 2 umatan bets even when 3+ valid candidates exist."""
+    def test_at_most_6_umatan_bets(self):
+        """D5 allows up to 6 umatan bets (fixed count per type, not TYPE_MAX=2)."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         predictions = _make_predictions([
@@ -331,8 +331,8 @@ class TestD2TypeMaxEnforced:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         umatan_count = sum(1 for b in bets if b["type"] == "umatan")
-        assert umatan_count <= 2, (
-            f"TYPE_MAX=2: expected at most 2 umatan bets, got {umatan_count}"
+        assert umatan_count <= 6, (
+            f"D5: expected at most 6 umatan bets, got {umatan_count}"
         )
 
     def test_at_most_2_umaren_bets(self):
