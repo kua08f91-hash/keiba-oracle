@@ -177,26 +177,19 @@ async function loadAndRenderDay(ds){
   if(scheduleCache[ds]){renderDay(scheduleCache[ds],ds);return;}
   el.innerHTML='<div class="text-center py-12"><div class="animate-spin inline-block w-8 h-8 border-4 border-navy-800 border-t-gold-400 rounded-full mb-2"></div><p class="text-sm text-gray-400">Loading...</p></div>';
 
-  // Build bet confidence map from static data (A/B/C based on evaluate_bet_confidence logic)
+  // Build bet confidence map from static data (D5: ◎score >= 75 → A, else C)
   const confMap={};
   if(staticData){
     const dayData=staticData.find(d=>d.date===ds);
     if(dayData){
       for(const c of dayData.courses){
         for(const r of c.races){
-          const entries=r.entries||[];
+          // Use betConfidence from export if available
+          if(r.betConfidence){confMap[r.raceId]=r.betConfidence;continue;}
+          // Fallback: D5 score-based logic
           const preds=(r.predictions||[]).filter(p=>p.score>0).sort((a,b)=>b.score-a.score);
-          if(!preds.length){confMap[r.raceId]='';continue;}
-          const hc=r.raceInfo?.headCount||entries.length||16;
-          const top1hn=preds[0].horseNumber;
-          const top1e=entries.find(e=>e.horseNumber===top1hn);
-          const top1odds=top1e?.odds||0;
-          const scores=preds.map(p=>p.score);
-          const conc=scores.length>=3?(scores[0]+scores[1]+scores[2])/scores.reduce((a,b)=>a+b,0):1;
-          let conf='B';
-          if(top1odds>=4&&top1odds<8&&hc>=16)conf='C';
-          else if((top1odds>0&&top1odds<2&&hc<12)||(conc>=0.4)||(top1odds>0&&top1odds<3&&hc<14))conf='A';
-          confMap[r.raceId]=conf;
+          if(!preds.length){confMap[r.raceId]='C';continue;}
+          confMap[r.raceId]=preds[0].score>=75?'A':'C';
         }
       }
     }
@@ -387,7 +380,7 @@ async function loadRaceDetail(id){
       renderDetail(c.raceInfo,"");
       // Apply bets from parallel fetch
       if(br&&br.ok){
-        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
+        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -460,7 +453,7 @@ async function _refreshLiveOdds(raceId){
       let frozenBets=dB,frozenLongshot=dLongshot;
       try{
         const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-        if(br.ok){const bd=await br.json();frozenBets=bd?.bets||[];frozenLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';
+        if(br.ok){const bd=await br.json();frozenBets=bd?.bets||[];frozenLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';
           if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
           const pb=document.getElementById("detail-pattern");
           if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
@@ -521,7 +514,7 @@ async function _refreshLiveOdds(raceId){
     renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
     try{
       const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'B';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
+      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -562,8 +555,12 @@ function renderDetail(info,pat){
     <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
       <div class="bg-navy-900 px-4 py-2.5 flex items-center justify-between">
         <h2 class="text-gold-400 font-black text-sm tracking-wide">AI OPTIMAL BETS</h2>
-        <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+        <div class="flex items-center gap-2">
+          <span id="detail-confidence"></span>
+          <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+        </div>
       </div>
+      <div id="bet-summary" class="px-4 py-1.5 bg-navy-800 text-[11px] flex items-center gap-3"></div>
       <div id="bets" class="divide-y divide-gray-100"></div>
       <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ AI予想は参考情報です。購入は自己責任でお願いします。</div>
     </div>
@@ -614,9 +611,18 @@ function renderTable(){
   document.getElementById('racecard').innerHTML=h;
 }
 
-let _betConfidence='B';
+let _betConfidence='C';
 function renderBets(){
-  const bets=dB;if(!bets||!bets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';return;}
+  const bets=dB;
+  // Confidence label
+  const confEl=document.getElementById('detail-confidence');
+  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':_betConfidence==='C'?'<span class="bg-blue-500/60 text-white text-[9px] font-black px-2 py-0.5 rounded">SKIP</span>':'';}
+  if(!bets||!bets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';document.getElementById('bet-summary').innerHTML='';return;}
+  // Summary: total investment
+  const totalAmt=bets.reduce((s,b)=>{const bs=b.betSize||1;return s+bs*500;},0);
+  const nBets=bets.length;
+  const sumEl=document.getElementById('bet-summary');
+  if(sumEl){sumEl.innerHTML=`<span class="text-gold-400 font-bold">${nBets}点</span><span class="text-gray-400">合計</span><span class="text-gold-400 font-black">¥${totalAmt.toLocaleString()}</span>`;}
   const rc=["from-gold-400 to-gold-600","from-gray-300 to-gray-400","from-amber-300 to-amber-500","from-gray-200 to-gray-300","from-gray-200 to-gray-300"];
   const tc={tansho:"bg-red-100 text-red-700",fukusho:"bg-blue-100 text-blue-700",umaren:"bg-purple-100 text-purple-700",wide:"bg-teal-100 text-teal-700",sanrenpuku:"bg-emerald-100 text-emerald-700",sanrentan:"bg-orange-100 text-orange-700"};
   let h='';
@@ -625,7 +631,8 @@ function renderBets(){
     const ev=b.ev||0;const evC=ev>0?"bg-emerald-100 text-emerald-700 border border-emerald-200":ev>-0.1?"bg-amber-100 text-amber-700 border border-amber-200":"bg-gray-100 text-gray-500 border border-gray-200";
     const hasOdds=b.odds&&b.odds>0;
     const evLabel=hasOdds?`EV ${ev>0?'+':''}${(ev*100).toFixed(0)}%`:'Score推奨';
-    h+=`<div class="px-4 py-2.5 ${i===0?'bg-gradient-to-r from-amber-50 to-white border-l-4 border-l-gold-500':''}"><div class="flex items-start gap-2.5"><span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b ${rc[i]||rc[4]} text-white text-[10px] font-black shadow">${b.rank||i+1}</span><div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 flex-wrap mb-0.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-black ${tc[b.type]||'bg-gray-100'}">${b.typeLabel||b.type}</span>${names.join('<span class="text-gray-300 text-[10px]">-</span>')}</div><div class="flex items-center gap-2.5 text-[11px]"><span class="${evC} px-1.5 py-0.5 rounded font-bold">${evLabel}</span>${hasOdds?`<span class="text-amber-700 font-bold">${b.oddsMin&&b.oddsMax&&b.oddsMin!==b.oddsMax?b.oddsMin.toFixed(1)+'-'+b.oddsMax.toFixed(1):b.odds.toFixed?b.odds.toFixed(1):b.odds}倍</span>`:'<span class="text-gray-300">オッズ未確定</span>'}${b.hitProb&&b.hitProb>0?`<span class="text-gray-400">的中${(b.hitProb*100).toFixed(1)}%</span>`:''}</div></div></div></div>`;
+    const bs=b.betSize||1;const betAmt=bs*500;const betLabel=bs>1?`<span class="bg-navy-800 text-gold-400 px-1.5 py-0.5 rounded text-[10px] font-black">${betAmt.toLocaleString()}円</span>`:`<span class="text-gray-400 text-[10px]">¥500</span>`;
+    h+=`<div class="px-4 py-2.5 ${i===0?'bg-gradient-to-r from-amber-50 to-white border-l-4 border-l-gold-500':''}"><div class="flex items-start gap-2.5"><span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b ${rc[i]||rc[4]} text-white text-[10px] font-black shadow">${b.rank||i+1}</span><div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 flex-wrap mb-0.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-black ${tc[b.type]||'bg-gray-100'}">${b.typeLabel||b.type}</span>${names.join('<span class="text-gray-300 text-[10px]">-</span>')}</div><div class="flex items-center gap-2.5 text-[11px]">${betLabel}<span class="${evC} px-1.5 py-0.5 rounded font-bold">${evLabel}</span>${hasOdds?`<span class="text-amber-700 font-bold">${b.oddsMin&&b.oddsMax&&b.oddsMin!==b.oddsMax?b.oddsMin.toFixed(1)+'-'+b.oddsMax.toFixed(1):b.odds.toFixed?b.odds.toFixed(1):b.odds}倍</span>`:'<span class="text-gray-300">オッズ未確定</span>'}${b.hitProb&&b.hitProb>0?`<span class="text-gray-400">的中${(b.hitProb*100).toFixed(1)}%</span>`:''}</div></div></div></div>`;
   });
   // Longshot (穴場券)
   if(dLongshot){
