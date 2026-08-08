@@ -84,7 +84,7 @@ def _race_list_from_db(date_str: str) -> list:
         db.close()
 
 
-FREEZE_THRESHOLD_MINS = 7
+FREEZE_THRESHOLD_MINS = 6
 
 
 def _get_cached_predictions(race_id: str):

@@ -439,7 +439,7 @@ class RealtimeWorker:
             time.sleep(interval)
 
 
-FREEZE_THRESHOLD_MINS = 7  # predictions are locked at this many minutes before post
+FREEZE_THRESHOLD_MINS = 6  # predictions are locked at this many minutes before post
 
 
 def compute_update_interval(min_mins: float) -> int:

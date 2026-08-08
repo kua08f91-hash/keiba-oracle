@@ -217,15 +217,15 @@ class TestShouldAutoFreeze:
     # ------ boundary: exactly at threshold ------
 
     def test_exactly_at_threshold_returns_true(self):
-        """mins_to_post == FREEZE_THRESHOLD_MINS (7) → True (<=)."""
+        """mins_to_post == FREEZE_THRESHOLD_MINS (6) → True (<=)."""
         from backend.main import _should_auto_freeze
 
         status = MagicMock()
         status.start_time = "15:30"
 
         session = self._make_session(race_status=status)
-        # now is 15:23 → exactly 7 minutes to post
-        now = self._mock_now_jst(15, 23)
+        # now is 15:24 → exactly 6 minutes to post
+        now = self._mock_now_jst(15, 24)
 
         with patch("backend.main.get_session", return_value=session), \
              patch("backend.main.now_jst", return_value=now):

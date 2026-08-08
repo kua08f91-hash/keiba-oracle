@@ -2417,11 +2417,11 @@ class TestUpdateIntervals:
     # Test 1 – freeze threshold constant is 7
     # ------------------------------------------------------------------
 
-    def test_freeze_threshold_constant_is_7(self):
-        """FREEZE_THRESHOLD_MINS exported from realtime_worker must equal 7."""
+    def test_freeze_threshold_constant_is_6(self):
+        """FREEZE_THRESHOLD_MINS exported from realtime_worker must equal 6."""
         from backend.realtime_worker import FREEZE_THRESHOLD_MINS
-        assert FREEZE_THRESHOLD_MINS == 7, (
-            f"Expected FREEZE_THRESHOLD_MINS=7 (changed from 10), got {FREEZE_THRESHOLD_MINS}"
+        assert FREEZE_THRESHOLD_MINS == 6, (
+            f"Expected FREEZE_THRESHOLD_MINS=6, got {FREEZE_THRESHOLD_MINS}"
         )
 
     # ------------------------------------------------------------------
