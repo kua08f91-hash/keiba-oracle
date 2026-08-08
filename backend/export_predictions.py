@@ -27,6 +27,7 @@ from backend.predictor.bet_optimizer import (
     optimize_bets, detect_race_pattern, scores_to_probabilities,
     generate_candidates, monte_carlo_finish, estimate_hit_probabilities,
     find_odds_for_bet, implied_fair_odds, pick_longshot,
+    evaluate_bet_confidence,
 )
 
 DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "data")
@@ -207,6 +208,7 @@ def main():
                         "factors": p.get("factors", {}),
                     } for p in preds],
                     "bets": bets,
+                    "betConfidence": evaluate_bet_confidence(preds, info, entries) if not frames_missing else "C",
                     "longshot": longshot,
                     "pattern": pattern,
                 }
