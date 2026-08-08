@@ -1454,20 +1454,22 @@ class TestS8Strategy:
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         for bet in bets:
-            assert bet["type"] in {"umatan", "umaren", "wide"}, (
+            assert bet["type"] in {"umatan", "umaren", "wide", "tansho", "fukusho"}, (
                 f"Disallowed type returned: {bet['type']}"
             )
 
-    def test_tansho_explicitly_absent(self):
-        """単勝 (tansho) must never appear even when it has excellent odds."""
+    def test_tansho_appears_when_odds_high(self):
+        """D5+単複: tansho appears when ◎ odds >= 6x (tanpuku hedge)."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
+        entries = [{"horseNumber": 1, "odds": 8.0, "isScratched": False}]
         odds_data = {
-            "tansho": [self._odds_entry([1], 50.0)],
+            "tansho": [self._odds_entry([1], 8.0)],
+            "fukusho": [self._odds_entry([1], 3.0)],
             "umatan": [self._odds_entry([1, 2], 50.0)],
         }
-        bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert all(b["type"] != "tansho" for b in bets)
+        bets = optimize_bets(predictions, odds_data, self._race_info(), entries=entries)
+        assert any(b["type"] == "tansho" for b in bets), "tansho should appear when ◎ odds >= 6x"
 
     def test_sanrentan_explicitly_absent(self):
         """3連単 must never appear even when in valid odds range."""
@@ -1843,13 +1845,11 @@ class TestS8Strategy:
         bets = optimize_bets(predictions, None, self._race_info())
         assert bets == []
 
-    def test_odds_data_with_only_disallowed_types_returns_empty(self):
-        """If odds_data only contains tansho/fukusho/sanrentan entries, result is empty."""
+    def test_odds_data_with_only_sanrentan_returns_empty(self):
+        """If odds_data only contains sanrentan entries (no ◎-anchor types), result is empty."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {
-            "tansho":    [self._odds_entry([1], 25.0)],
-            "fukusho":   [self._odds_entry([2], 12.0)],
             "sanrentan": [self._odds_entry([1, 2, 3], 200.0)],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())

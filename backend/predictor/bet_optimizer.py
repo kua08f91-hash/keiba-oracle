@@ -54,6 +54,17 @@ HONMEI_UMAREN_PARTNERS = 4   # ◎-AI 2~5位
 HONMEI_WIDE_PARTNERS = 4     # ◎-AI 2~5位
 SHOUBU_MIN_SCORE = 75.0       # 勝負レース判定: ◎のスコアが75以上
 
+# 単複リスクヘッジ (improvement 2: ROI +2.9%)
+TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ
+TANPUKU_FUKUSHO_MIN_ODDS = 2.0  # 複勝は2倍以上のみ
+TANPUKU_RATIO = (1, 3)           # 単勝:複勝 = 1:3
+
+# ケリー基準 (improvement 1: 利益額6倍)
+KELLY_FRACTION = 0.5  # ハーフケリー
+DEFAULT_BANKROLL = 100000  # デフォルト残高
+KELLY_MIN_BET = 100   # 最小賭金
+KELLY_MAX_BET = 5000  # 最大賭金
+
 # Minimum odds per type (user rule: "1倍台は提示しない")
 MIN_ODDS_BY_TYPE = {
     "tansho": 2.0,
@@ -350,6 +361,25 @@ def find_odds_for_bet(bet: Dict, odds_data: Dict) -> Optional[Dict]:
     return None
 
 
+def kelly_bet_size(hit_prob: float, odds: float, bankroll: float = DEFAULT_BANKROLL) -> int:
+    """Calculate bet size using half-Kelly criterion.
+
+    f = ((b+1)*p - 1) / b where b = odds - 1, p = hit probability.
+    Returns bet amount in yen (rounded to 100), clamped to [KELLY_MIN_BET, KELLY_MAX_BET].
+    Returns 0 if Kelly f <= 0 (don't bet).
+    """
+    if odds <= 1 or hit_prob <= 0:
+        return 0
+    b = odds - 1.0
+    f = ((b + 1) * hit_prob - 1) / b
+    f_half = f * KELLY_FRACTION
+    if f_half <= 0:
+        return 0
+    amount = bankroll * f_half
+    amount = max(KELLY_MIN_BET, min(int(amount / 100) * 100, KELLY_MAX_BET))
+    return amount
+
+
 def implied_fair_odds(hit_prob: float) -> float:
     """Calculate implied fair odds from hit probability, applying JRA takeout."""
     if hit_prob <= 0:
@@ -477,11 +507,81 @@ def optimize_bets(
         pair = sorted([honmei_hn, partner_hn])
         _try_add("wide", pair, False)
 
+    # ── 単複リスクヘッジ: ◎の単勝(6x+) + 複勝(2x+) を1:3比率 ──
+    honmei_odds = 0.0
+    if entries:
+        for e in entries:
+            if e.get("horseNumber") == honmei_hn and e.get("odds"):
+                honmei_odds = e["odds"]
+                break
+    if not honmei_odds and odds_data and "tansho" in odds_data:
+        for entry in odds_data["tansho"]:
+            if entry.get("horses") == [honmei_hn]:
+                honmei_odds = entry["odds"]
+                break
+
+    if honmei_odds >= TANPUKU_TANSHO_MIN_ODDS:
+        # 単勝 ◎ (1単位)
+        tansho_cand = cand_lookup.get(("tansho", (honmei_hn,)))
+        if tansho_cand:
+            oi = find_odds_for_bet(tansho_cand, odds_data)
+            if oi and oi["odds"] >= TANPUKU_TANSHO_MIN_ODDS:
+                c = dict(tansho_cand)
+                c["odds"] = oi["odds"]
+                c["payout"] = oi["payout"]
+                c["hasRealOdds"] = True
+                c["ev"] = c["hitProb"] * oi["odds"] - 1.0
+                c["betSize"] = TANPUKU_RATIO[0]  # 1単位
+                selected.append(c)
+        # 複勝 ◎ (3単位)
+        fukusho_cand = cand_lookup.get(("fukusho", (honmei_hn,)))
+        if fukusho_cand:
+            oi = find_odds_for_bet(fukusho_cand, odds_data)
+            if oi and oi["odds"] >= TANPUKU_FUKUSHO_MIN_ODDS:
+                c = dict(fukusho_cand)
+                c["odds"] = oi["odds"]
+                c["payout"] = oi["payout"]
+                c["hasRealOdds"] = True
+                if "oddsMin" in oi:
+                    c["oddsMin"] = oi["oddsMin"]
+                if "oddsMax" in oi:
+                    c["oddsMax"] = oi["oddsMax"]
+                c["ev"] = c["hitProb"] * oi["odds"] - 1.0
+                c["betSize"] = TANPUKU_RATIO[1]  # 3単位
+                selected.append(c)
+    elif honmei_odds >= TANPUKU_FUKUSHO_MIN_ODDS:
+        # 複勝のみ (2単位)
+        fukusho_cand = cand_lookup.get(("fukusho", (honmei_hn,)))
+        if fukusho_cand:
+            oi = find_odds_for_bet(fukusho_cand, odds_data)
+            if oi and oi["odds"] >= TANPUKU_FUKUSHO_MIN_ODDS:
+                c = dict(fukusho_cand)
+                c["odds"] = oi["odds"]
+                c["payout"] = oi["payout"]
+                c["hasRealOdds"] = True
+                if "oddsMin" in oi:
+                    c["oddsMin"] = oi["oddsMin"]
+                if "oddsMax" in oi:
+                    c["oddsMax"] = oi["oddsMax"]
+                c["ev"] = c["hitProb"] * oi["odds"] - 1.0
+                c["betSize"] = 2  # 2単位
+                selected.append(c)
+
     # Sort by odds descending (high-value bets first for display)
     selected.sort(key=lambda x: -x.get("odds", 0))
 
     # Apply max_bets cap
     selected = selected[:max_bets]
+
+    # ── ケリー基準で金額傾斜 (betSize フィールド) ──
+    bankroll = race_info.get("bankroll", DEFAULT_BANKROLL)
+    for bet in selected:
+        if "betSize" not in bet:  # 単複は既にbetSize設定済み
+            k_size = kelly_bet_size(bet["hitProb"], bet.get("odds", 1), bankroll)
+            if k_size > 0:
+                bet["betSize"] = k_size
+            else:
+                bet["betSize"] = 1  # Kelly f<=0 でも最小1単位は購入
 
     # Clean up frame maps from all candidates
     for c in candidates:
