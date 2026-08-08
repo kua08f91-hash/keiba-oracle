@@ -94,8 +94,8 @@ class TestHonmeiUmatanSelectedFirst:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated
-        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        # D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 honmei-anchor umatan selected
+        assert len(umatan_bets) == 1, f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet, got {len(umatan_bets)}"
 
     def test_honmei_anchor_rank_precedes_non_honmei(self):
         from backend.predictor.bet_optimizer import optimize_bets
@@ -131,7 +131,7 @@ class TestHonmeiUmatanTypeMax:
     """D5 allows up to 6 ◎-anchor umatan bets (fixed count per type)."""
 
     def test_all_three_honmei_umatan_selected_from_three(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
+        """D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 honmei-anchor umatan selected from three."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         # Horse 1 = ◎; three viable ◎-anchor pairs available
@@ -152,8 +152,8 @@ class TestHonmeiUmatanTypeMax:
             b for b in bets
             if b["type"] == "umatan" and b["horses"][0] == 1
         ]
-        assert len(honmei_umatan) == 0, (
-            f"D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected, got {len(honmei_umatan)}"
+        assert len(honmei_umatan) == 1, (
+            f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet, got {len(honmei_umatan)}"
         )
 
     def test_type_max_is_six_for_umatan(self):
@@ -187,7 +187,7 @@ class TestNonHonmeiUmatanFillsSlot:
     """D5 is all-◎-anchor: non-◎ umatan bets are not generated."""
 
     def test_only_honmei_umatan_selected_when_non_honmei_present(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated at all."""
+        """D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 honmei-anchor umatan, no non-◎ umatan."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         # Horse 1 = ◎; 1 ◎-anchor + 2 non-◎ umatan available
@@ -207,7 +207,7 @@ class TestNonHonmeiUmatanFillsSlot:
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
         non_honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] != 1]
 
-        assert len(honmei_umatan) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(honmei_umatan) == 1, f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 honmei umatan, got {len(honmei_umatan)}"
         assert len(non_honmei_umatan) == 0, (
             "D5: non-◎ umatan bets should not be generated"
         )
@@ -248,18 +248,18 @@ class TestOtherBetTypesUnaffected:
                                          (5, 40), (6, 30), (7, 20)])
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 100.0),   # ◎-anchor (no umatan generated)
+                _odds_entry([1, 2], 100.0),   # ◎-anchor (honmei→AI 2nd)
             ],
             "umaren": [
-                _odds_entry([1, 3], UMAREN_OK),  # within range
+                _odds_entry([1, 2], UMAREN_OK),  # ◎-AI 2位 pair (matches HONMEI_UMAREN_PARTNERS=1)
             ],
             "wide": [],
         }
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types = [b["type"] for b in bets]
-        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; umaren should be selected
-        assert "umatan" not in types, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected"
+        # D5: HONMEI_UMATAN_PARTNERS=1 — 1 umatan generated; umaren also selected
+        assert "umatan" in types, "D5: HONMEI_UMATAN_PARTNERS=1, 1 umatan expected"
         assert "umaren" in types, "umaren should be selected"
 
     def test_wide_selected_after_honmei_umatan(self):
@@ -279,8 +279,8 @@ class TestOtherBetTypesUnaffected:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types = [b["type"] for b in bets]
-        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; wide should be selected
-        assert "umatan" not in types, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected"
+        # D5: HONMEI_UMATAN_PARTNERS=1 — 1 umatan generated; wide also selected
+        assert "umatan" in types, "D5: HONMEI_UMATAN_PARTNERS=1, 1 umatan expected"
         assert "wide" in types, "wide should be selected"
 
     def test_umaren_and_wide_selected_alongside_honmei_umatan(self):
@@ -305,8 +305,8 @@ class TestOtherBetTypesUnaffected:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types_seen = {b["type"] for b in bets}
-        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; umaren and/or wide should be present
-        assert "umatan" not in types_seen
+        # D5: HONMEI_UMATAN_PARTNERS=1 — 1 umatan; umaren and/or wide also present
+        assert "umatan" in types_seen
         # D5 MAX_BETS=5
         assert len(bets) <= 5
 
@@ -432,7 +432,7 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 0, f"D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected, got {len(honmei_umatan)}"
+        assert len(honmei_umatan) == 1, f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan, got {len(honmei_umatan)}"
 
     def test_all_honmei_umatan_selected_within_cap(self):
         """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
@@ -452,8 +452,8 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(honmei_umatan) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     def test_honmei_umatan_order_descending_odds(self):
@@ -472,8 +472,8 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated
-        assert len(honmei_umatan) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        # D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 umatan bet generated (highest-odds partner)
+        assert len(honmei_umatan) == 1, "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
 
 
 # ---------------------------------------------------------------------------

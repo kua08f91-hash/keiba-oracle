@@ -39,7 +39,7 @@ def _make_race_info(head_count: int) -> dict:
 # ---------------------------------------------------------------------------
 
 class TestARank:
-    """A = 勝負: ◎score >= SHOUBU_MIN_SCORE (78)."""
+    """A = 勝負: ◎score >= SHOUBU_MIN_SCORE (79)."""
 
     def test_high_score_returns_a(self):
         """◎score=90 → 'A'."""
@@ -48,14 +48,14 @@ class TestARank:
         assert result == "A"
 
     def test_score_exactly_at_threshold_returns_a(self):
-        """◎score=78.0 (exact threshold) → 'A'."""
-        predictions = _make_predictions([78.0, 60, 40])
+        """◎score=79.0 (exact threshold) → 'A'."""
+        predictions = _make_predictions([79.0, 60, 40])
         result = evaluate_bet_confidence(predictions, _make_race_info(12))
         assert result == "A"
 
     def test_score_just_above_threshold_returns_a(self):
-        """◎score=78.1 → 'A'."""
-        predictions = _make_predictions([78.1, 50, 30])
+        """◎score=79.1 → 'A'."""
+        predictions = _make_predictions([79.1, 50, 30])
         result = evaluate_bet_confidence(predictions, _make_race_info(18))
         assert result == "A"
 
@@ -166,5 +166,5 @@ class TestEdgeCases:
             )
 
     def test_shoubu_min_score_constant_is_75(self):
-        """SHOUBU_MIN_SCORE constant is 78."""
-        assert SHOUBU_MIN_SCORE == 78.0
+        """SHOUBU_MIN_SCORE constant is 79."""
+        assert SHOUBU_MIN_SCORE == 79.0

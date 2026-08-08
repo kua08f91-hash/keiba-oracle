@@ -860,11 +860,15 @@ def calc_pace_predict(entries: list) -> float:
 
 
 def calc_draw_bias(post_position: int, head_count: int, surface: str = "",
-                   distance: int = 0, course_detail: str = "") -> float:
-    """Score based on post position (枠順) advantage.
+                   distance: int = 0, course_detail: str = "",
+                   course_code: str = "", track_condition: str = "") -> float:
+    """Score based on post position (枠順) advantage with track bias.
 
-    Inner posts generally favor shorter races; outer posts can be
-    advantageous in longer races with early pace.
+    Incorporates course-specific and condition-specific biases:
+    - 新潟(04): 芝は内枠有利、ダートは外枠有利（直線1000mは大外有利）
+    - 中京(07): 芝は内枠やや有利、ダートはフラット
+    - 札幌(01): 芝は内枠有利（洋芝で内ラチ沿いが有利）、ダートは内枠有利
+    - 重/不良馬場: 外枠有利にシフト（内が荒れるため）
     """
     if post_position <= 0 or head_count <= 0:
         return 50.0
@@ -872,17 +876,41 @@ def calc_draw_bias(post_position: int, head_count: int, surface: str = "",
     # Normalize position: 0.0 (innermost) to 1.0 (outermost)
     norm_pos = (post_position - 1) / max(head_count - 1, 1)
 
-    # Default: slight inner bias (JRA average)
-    # bias > 0 means inner advantage: inner (norm_pos=0) gets +bias*0.5,
-    # outer (norm_pos=1) gets -bias*0.5.
-    bias = 5.0  # Inner advantage
+    is_turf = "芝" in surface if surface else True
+    is_heavy = track_condition in ("重", "不良") if track_condition else False
 
-    # Sprint races (≤1400m): stronger inner bias
-    if distance > 0 and distance <= 1400:
-        bias = 10.0
-    # Long races (≥2400m): less bias or slight outer advantage
+    # Course-specific bias (positive = inner advantage)
+    # Based on JRA course characteristics
+    COURSE_BIAS = {
+        # course_code: (turf_bias, dirt_bias)
+        "01": (12.0, 8.0),    # 札幌: 洋芝・内有利、ダートも内有利
+        "02": (8.0, 5.0),     # 函館: 洋芝・内有利
+        "03": (6.0, 3.0),     # 福島: 小回り・内有利
+        "04": (8.0, -3.0),    # 新潟: 芝内有利、ダート外やや有利
+        "05": (5.0, 3.0),     # 東京: 大箱・バイアス小
+        "06": (7.0, 5.0),     # 中山: 内有利
+        "07": (6.0, 0.0),     # 中京: 芝は内やや有利、ダートはフラット
+        "08": (5.0, 3.0),     # 京都: 外回り含むためバイアス小
+        "09": (7.0, 5.0),     # 阪神: 内有利
+        "10": (10.0, 6.0),    # 小倉: 小回り・内有利
+    }
+
+    turf_bias, dirt_bias = COURSE_BIAS.get(course_code, (5.0, 3.0))
+    bias = turf_bias if is_turf else dirt_bias
+
+    # Distance adjustment
+    if distance > 0 and distance <= 1200:
+        bias *= 1.3  # スプリントは枠順影響大
     elif distance > 0 and distance >= 2400:
-        bias = 0.0
+        bias *= 0.5  # 長距離は枠順影響小
+
+    # 新潟直線1000m: 大外有利（特殊コース）
+    if course_code == "04" and distance == 1000 and is_turf:
+        bias = -15.0  # 外枠有利
+
+    # 重/不良馬場: 内が荒れるので外枠有利にシフト
+    if is_heavy:
+        bias -= 5.0
 
     # Small fields: position matters less
     if head_count <= 8:

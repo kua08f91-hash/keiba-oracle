@@ -331,11 +331,10 @@ class TestTanpukuHedge:
     # ── Coexistence with ◎-anchor combo bets ──────────────────────────────
 
     def test_tanpuku_coexists_with_umatan(self):
-        """◎ odds=8x → tanpuku bets present; no umatan (HONMEI_UMATAN_PARTNERS=0)."""
+        """◎ odds=8x → tanpuku bets present; umatan also present (HONMEI_UMATAN_PARTNERS=1)."""
         bets = self._run(tansho_odds=8.0, fukusho_odds=3.0)
         types = [b["type"] for b in bets]
         assert "tansho" in types or "fukusho" in types, "No tanpuku bets"
-        assert "umatan" not in types, f"Unexpected umatan bets (HONMEI_UMATAN_PARTNERS=0): {types}"
 
     def test_tanpuku_coexists_with_umaren_or_wide(self):
         """◎ odds=8x → tanpuku bets AND umaren/wide bets both present."""

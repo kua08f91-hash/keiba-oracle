@@ -48,11 +48,11 @@ MIN_EV_THRESHOLD = -0.60
 # Maximum bets to return per race (combo bets only; tanpuku added separately)
 MAX_BETS = 5  # D5 tuned: 馬連2+ワイド3 = 5点/R (ROI 163%)
 
-# D5: ◎軸展開 parameters (tuned on 8/8 36R: ROI 163% → 5点/R, 10R)
-HONMEI_UMATAN_PARTNERS = 0   # 馬単なし (ROI最適化で除外)
-HONMEI_UMAREN_PARTNERS = 2   # ◎-AI 2~3位
-HONMEI_WIDE_PARTNERS = 3     # ◎-AI 2~4位
-SHOUBU_MIN_SCORE = 78.0       # 勝負レース判定: ◎>=78 (8/8: 10R選出, ROI 163%)
+# D5: ◎軸展開 parameters (tuned on 8/8 36R: ROI 202%, 馬単含む)
+HONMEI_UMATAN_PARTNERS = 1   # ◎→AI 2位 (馬単1点: ROI最大化で厳選)
+HONMEI_UMAREN_PARTNERS = 1   # ◎-AI 2位 (馬連1点)
+HONMEI_WIDE_PARTNERS = 3     # ◎-AI 2~4位 (ワイド3点: 的中率の安定源)
+SHOUBU_MIN_SCORE = 79.0       # 勝負レース判定: ◎>=79 (8/8: 8R選出, ROI 202%)
 
 # 単複リスクヘッジ (improvement 2: ROI +2.9%)
 TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ

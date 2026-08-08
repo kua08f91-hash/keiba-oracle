@@ -46,7 +46,7 @@ from .factors import (
 # Optimized via 1,107-race historical data (2023-2024)
 # Constrained: max 30% per factor to prevent overfitting
 ANALYTICAL_WEIGHTS = {
-    "trackDirection": 0.1217,
+    "trackDirection": 0.1027,  # Reduced by 0.019 to fund drawBias increase
     "trackCondition": 0.1217,
     "trackSpecific": 0.0476,
     "jockeyAbility": 0.0952,
@@ -67,7 +67,7 @@ ANALYTICAL_WEIGHTS = {
     "distanceAptitude": 0.0212,
     "agari3f": 0.0212,
     "marginScore": 0.0212,
-    "drawBias": 0.0212,
+    "drawBias": 0.0400,  # Increased: course-specific track bias now active
 }
 # Defaults (22 keys, sum=1.0). When optimized_weights.json is loaded,
 # its values replace these entirely.
@@ -172,6 +172,8 @@ class WeightedScoringModel(PredictionModel):
                 "drawBias": calc_draw_bias(
                     entry.get("frameNumber", entry.get("horseNumber", 0)),
                     head_count, surface, distance, course_detail,
+                    course_code=racecourse_code,
+                    track_condition=track_condition,
                 ),
             }
 

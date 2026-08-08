@@ -77,8 +77,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 2: 29.9x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -92,8 +92,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 3: 35.0x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -107,8 +107,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 4: 49.9x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -122,8 +122,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 5: 50.0x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -137,8 +137,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 6: 300.0x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -152,8 +152,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     # Test 7: 300.1x → no umatan (HONMEI_UMATAN_PARTNERS=0)
@@ -167,8 +167,8 @@ class TestD3UmatanBoundaries:
             mc_samples=100,
         )
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
 
@@ -194,7 +194,7 @@ class TestD3HonmeiAnchorInDeadZone:
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
 
     # Test 9: no umatan (HONMEI_UMATAN_PARTNERS=0)
     def test_honmei_anchor_45x_is_selected_in_d3(self):
@@ -210,8 +210,8 @@ class TestD3HonmeiAnchorInDeadZone:
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
 
@@ -321,8 +321,8 @@ class TestD3ProducesMoreBetsThanD2:
         d3_bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         d3_umatan = [b for b in d3_bets if b["type"] == "umatan"]
 
-        assert len(d3_umatan) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(d3_umatan) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     def test_d5_accepts_bets_above_5x_floor(self):
@@ -339,8 +339,8 @@ class TestD3ProducesMoreBetsThanD2:
         }
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
 
     def test_d3_combined_dead_zone_and_high_odds(self):
@@ -359,6 +359,6 @@ class TestD3ProducesMoreBetsThanD2:
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
 
-        assert len(umatan_bets) == 0, (
-            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
+        assert len(umatan_bets) == 1, (
+            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
         )
