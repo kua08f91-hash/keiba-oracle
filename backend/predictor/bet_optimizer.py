@@ -457,6 +457,8 @@ def optimize_bets(
         cand_lookup[key] = c
 
     selected = []
+    # Tanpuku bets are collected separately so they survive the max_bets cap.
+    tanpuku_bets: List[Dict] = []
 
     def _try_add(bet_type, horses, ordered):
         """Try to add a ◎-anchor bet if odds are available and above minimum."""
@@ -534,7 +536,7 @@ def optimize_bets(
                 c["hasRealOdds"] = True
                 c["ev"] = c["hitProb"] * oi["odds"] - 1.0
                 c["betSize"] = TANPUKU_RATIO[0]  # 1単位
-                selected.append(c)
+                tanpuku_bets.append(c)
         # 複勝 ◎ (3単位)
         fukusho_cand = cand_lookup.get(("fukusho", (honmei_hn,)))
         if fukusho_cand:
@@ -550,7 +552,7 @@ def optimize_bets(
                     c["oddsMax"] = oi["oddsMax"]
                 c["ev"] = c["hitProb"] * oi["odds"] - 1.0
                 c["betSize"] = TANPUKU_RATIO[1]  # 3単位
-                selected.append(c)
+                tanpuku_bets.append(c)
     elif honmei_odds >= TANPUKU_FUKUSHO_MIN_ODDS:
         # 複勝のみ (2単位)
         fukusho_cand = cand_lookup.get(("fukusho", (honmei_hn,)))
@@ -567,13 +569,16 @@ def optimize_bets(
                     c["oddsMax"] = oi["oddsMax"]
                 c["ev"] = c["hitProb"] * oi["odds"] - 1.0
                 c["betSize"] = 2  # 2単位
-                selected.append(c)
+                tanpuku_bets.append(c)
 
-    # Sort by odds descending (high-value bets first for display)
+    # Sort combo bets by odds descending (high-value bets first for display)
     selected.sort(key=lambda x: -x.get("odds", 0))
 
-    # Apply max_bets cap
+    # Apply max_bets cap to combo bets, then append tanpuku bets unconditionally.
+    # Tanpuku bets are guaranteed risk-hedge additions and must not be displaced
+    # by the combo-bet cap.
     selected = selected[:max_bets]
+    selected.extend(tanpuku_bets)
 
     # ── ケリー基準で金額傾斜 (betSize フィールド) ──
     bankroll = race_info.get("bankroll", DEFAULT_BANKROLL)
