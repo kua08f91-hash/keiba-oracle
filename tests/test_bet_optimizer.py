@@ -1485,13 +1485,13 @@ class TestS8Strategy:
     # ── 2. umatan odds range 20–300x ─────────────────────────────────────────
 
     def test_umatan_within_range_is_included(self):
-        """A umatan bet at exactly the midpoint (160x) must be selected."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets are generated."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 160.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, "umatan at 160x (in range) must be selected"
+        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
 
     def test_umatan_below_5x_rejected(self):
         """D5: umatan below 5x must be rejected (odds=4.9)."""
@@ -1504,42 +1504,42 @@ class TestS8Strategy:
         )
 
     def test_umatan_at_exact_5x_accepted(self):
-        """D5: umatan at exactly 5.0x must be accepted."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated even at 5.0x."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 5.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert any(b["type"] == "umatan" for b in bets), (
-            "umatan at 5.0x (at D5 minimum) must be accepted"
+        assert not any(b["type"] == "umatan" for b in bets), (
+            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         )
 
     def test_umatan_high_odds_no_upper_limit(self):
-        """D5: no upper limit for umatan — 500x should be accepted."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated even at 500x."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 500.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert any(b["type"] == "umatan" for b in bets), (
-            "D5 has no upper limit for umatan; 500x must be accepted"
+        assert not any(b["type"] == "umatan" for b in bets), (
+            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         )
 
     def test_umatan_at_lower_boundary_included(self):
-        """umatan at exactly 50.0x must be included (boundary is inclusive)."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 50.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, "umatan at exactly 50.0x must be included"
+        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
 
     def test_umatan_at_upper_boundary_included(self):
-        """umatan at exactly 300.0x must be included (boundary is inclusive)."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 300.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, "umatan at exactly 300.0x must be included"
+        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
 
     # ── 3. umaren odds range 20–100x ─────────────────────────────────────────
 
@@ -2542,15 +2542,15 @@ class TestD5HonmeiAnchorStrategy:
         assert any(b["type"] == "wide" for b in bets)
 
     def test_umatan_at_5x_accepted(self):
-        """D5: umatan at 5x (exactly at min) is accepted."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {"umatan": [self._odds_entry([1, 2], 5.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert any(b["type"] == "umatan" for b in bets)
+        assert not any(b["type"] == "umatan" for b in bets)
 
     def test_all_three_types_together(self):
-        """D5: umatan + umaren + wide all selected from same race."""
+        """D5: umaren + wide selected (no umatan — HONMEI_UMATAN_PARTNERS=0)."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {
@@ -2560,7 +2560,8 @@ class TestD5HonmeiAnchorStrategy:
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         types = {b["type"] for b in bets}
-        assert "umatan" in types and "umaren" in types and "wide" in types
+        assert "umaren" in types and "wide" in types
+        assert "umatan" not in types
 
     def test_all_bets_are_honmei_anchor(self):
         """D5: every returned bet contains ◎ (horse 1, the top scorer)."""
@@ -2608,14 +2609,14 @@ class TestD5HonmeiAnchorStrategy:
         assert bets == []
 
     def test_partners_from_ai_ranking(self):
-        """D5: umatan partners come from AI ranking, not market popularity."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         # ◎=1, AI 2nd=2, AI 3rd=3
-        # Only provide odds for ◎→3 (AI 3rd) — should be selected
+        # Provide odds for ◎→3 but no umatan bets should be generated
         odds_data = {"umatan": [self._odds_entry([1, 3], 20.0)]}
         bets = optimize_bets(predictions, odds_data, self._race_info())
-        assert any(b["horses"] == [1, 3] for b in bets if b["type"] == "umatan")
+        assert not any(b["type"] == "umatan" for b in bets)
 
 
 # ---------------------------------------------------------------------------

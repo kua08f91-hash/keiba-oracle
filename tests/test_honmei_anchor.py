@@ -94,14 +94,8 @@ class TestHonmeiUmatanSelectedFirst:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, "Expected at least one umatan bet"
-
-        # The first umatan bet must be the ◎-anchor
-        first_umatan = umatan_bets[0]
-        assert first_umatan["horses"][0] == honmei_hn, (
-            f"First umatan should be ◎-anchor (horse {honmei_hn} as 1st), "
-            f"got horses={first_umatan['horses']}"
-        )
+        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated
+        assert len(umatan_bets) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
 
     def test_honmei_anchor_rank_precedes_non_honmei(self):
         from backend.predictor.bet_optimizer import optimize_bets
@@ -137,7 +131,7 @@ class TestHonmeiUmatanTypeMax:
     """D5 allows up to 6 ◎-anchor umatan bets (fixed count per type)."""
 
     def test_all_three_honmei_umatan_selected_from_three(self):
-        """D5 allows up to 6 umatan — all 3 ◎-anchor candidates should be accepted."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         # Horse 1 = ◎; three viable ◎-anchor pairs available
@@ -158,11 +152,8 @@ class TestHonmeiUmatanTypeMax:
             b for b in bets
             if b["type"] == "umatan" and b["horses"][0] == 1
         ]
-        assert len(honmei_umatan) <= 6, (
-            f"D5: expected at most 6 ◎-anchor umatan, got {len(honmei_umatan)}"
-        )
-        assert len(honmei_umatan) == 3, (
-            f"D5: all 3 ◎-anchor umatan candidates should be selected, got {len(honmei_umatan)}"
+        assert len(honmei_umatan) == 0, (
+            f"D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected, got {len(honmei_umatan)}"
         )
 
     def test_type_max_is_six_for_umatan(self):
@@ -196,7 +187,7 @@ class TestNonHonmeiUmatanFillsSlot:
     """D5 is all-◎-anchor: non-◎ umatan bets are not generated."""
 
     def test_only_honmei_umatan_selected_when_non_honmei_present(self):
-        """D5: only the ◎-anchor umatan is selected; non-◎ pairs are ignored."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated at all."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         # Horse 1 = ◎; 1 ◎-anchor + 2 non-◎ umatan available
@@ -216,7 +207,7 @@ class TestNonHonmeiUmatanFillsSlot:
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
         non_honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] != 1]
 
-        assert len(honmei_umatan) >= 1, "Expected at least 1 ◎-anchor umatan"
+        assert len(honmei_umatan) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         assert len(non_honmei_umatan) == 0, (
             "D5: non-◎ umatan bets should not be generated"
         )
@@ -257,18 +248,19 @@ class TestOtherBetTypesUnaffected:
                                          (5, 40), (6, 30), (7, 20)])
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 100.0),   # ◎-anchor
+                _odds_entry([1, 2], 100.0),   # ◎-anchor (no umatan generated)
             ],
             "umaren": [
-                _odds_entry([1, 3], UMAREN_OK),  # within 15-30x
+                _odds_entry([1, 3], UMAREN_OK),  # within range
             ],
             "wide": [],
         }
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types = [b["type"] for b in bets]
-        assert "umatan" in types, "umatan bet expected"
-        assert "umaren" in types, "umaren should still be selected after umatan"
+        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; umaren should be selected
+        assert "umatan" not in types, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected"
+        assert "umaren" in types, "umaren should be selected"
 
     def test_wide_selected_after_honmei_umatan(self):
         from backend.predictor.bet_optimizer import optimize_bets
@@ -277,18 +269,19 @@ class TestOtherBetTypesUnaffected:
                                          (5, 40), (6, 30), (7, 20)])
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 100.0),
+                _odds_entry([1, 2], 100.0),  # no umatan generated
             ],
             "umaren": [],
             "wide": [
-                _odds_entry([1, 3], WIDE_OK),   # within 10-30x
+                _odds_entry([1, 3], WIDE_OK),   # within range
             ],
         }
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types = [b["type"] for b in bets]
-        assert "umatan" in types, "umatan bet expected"
-        assert "wide" in types, "wide should still be selected after umatan"
+        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; wide should be selected
+        assert "umatan" not in types, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected"
+        assert "wide" in types, "wide should be selected"
 
     def test_umaren_and_wide_selected_alongside_honmei_umatan(self):
         from backend.predictor.bet_optimizer import optimize_bets
@@ -312,9 +305,10 @@ class TestOtherBetTypesUnaffected:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types_seen = {b["type"] for b in bets}
-        assert "umatan" in types_seen
-        # D5 MAX_BETS=14, all valid ◎-anchor bets across types should fit
-        assert len(bets) <= 14
+        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan; umaren and/or wide should be present
+        assert "umatan" not in types_seen
+        # D5 MAX_BETS=5
+        assert len(bets) <= 5
 
 
 # ---------------------------------------------------------------------------
@@ -421,33 +415,7 @@ class TestHonmeiUmatanSortedByOdds:
     """Within ◎-anchor umatan, highest-odds pairs are selected first."""
 
     def test_highest_odds_honmei_umatan_selected(self):
-        """D5 allows up to 6 umatan — all 3 ◎-anchor candidates are selected."""
-        from backend.predictor.bet_optimizer import optimize_bets
-
-        predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
-                                         (5, 40), (6, 30), (7, 20)])
-        # Three ◎-anchor candidates at 200x, 150x, 100x
-        odds_data = {
-            "umatan": [
-                _odds_entry([1, 2], 100.0),   # lowest
-                _odds_entry([1, 3], 150.0),   # middle
-                _odds_entry([1, 4], 200.0),   # highest
-            ],
-            "umaren": [],
-            "wide": [],
-        }
-        bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
-
-        honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 3, f"D5: expected all 3 ◎-anchor umatan selected, got {len(honmei_umatan)}"
-
-        selected_odds = {b["odds"] for b in honmei_umatan}
-        assert 200.0 in selected_odds, "200x ◎-anchor should be selected"
-        assert 150.0 in selected_odds, "150x ◎-anchor should be selected"
-        assert 100.0 in selected_odds, "100x ◎-anchor should be selected (D5 allows all 3)"
-
-    def test_all_honmei_umatan_selected_within_cap(self):
-        """D5: all ◎-anchor umatan are selected as long as count <= 6."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
@@ -464,9 +432,28 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        selected_odds = {b["odds"] for b in honmei_umatan}
-        assert 100.0 in selected_odds, (
-            "D5: all ◎-anchor umatan within cap (6) should be selected, including 100x"
+        assert len(honmei_umatan) == 0, f"D5: HONMEI_UMATAN_PARTNERS=0, no umatan expected, got {len(honmei_umatan)}"
+
+    def test_all_honmei_umatan_selected_within_cap(self):
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
+        from backend.predictor.bet_optimizer import optimize_bets
+
+        predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
+                                         (5, 40), (6, 30), (7, 20)])
+        odds_data = {
+            "umatan": [
+                _odds_entry([1, 2], 100.0),
+                _odds_entry([1, 3], 150.0),
+                _odds_entry([1, 4], 200.0),
+            ],
+            "umaren": [],
+            "wide": [],
+        }
+        bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
+
+        honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
+        assert len(honmei_umatan) == 0, (
+            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         )
 
     def test_honmei_umatan_order_descending_odds(self):
@@ -485,12 +472,8 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 2
-        # Rank 1 (lowest rank number) should have higher odds
-        by_rank = sorted(honmei_umatan, key=lambda b: b["rank"])
-        assert by_rank[0]["odds"] > by_rank[1]["odds"], (
-            "First selected ◎-anchor umatan should have higher odds than second"
-        )
+        # D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated
+        assert len(honmei_umatan) == 0, "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
 
 
 # ---------------------------------------------------------------------------

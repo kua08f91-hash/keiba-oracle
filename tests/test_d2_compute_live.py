@@ -182,11 +182,11 @@ class TestD2TopNFiltering:
         ])
 
     def test_ai_rank_6_horse_included_in_umatan_candidates(self):
-        """Horse ranked 6th by AI score can appear in selected umatan bets."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated even with rank-6 partner."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         predictions = self._build_predictions_8_horses()
-        # Horse 1 (rank 1) → horse 6 (rank 6): a valid ◎-anchor umatan
+        # Horse 1 (rank 1) → horse 6 (rank 6): would be ◎-anchor umatan but PARTNERS=0
         odds_data = {
             "umatan": [_odds_entry([1, 6], 80.0)],   # rank6 as 2nd horse
             "umaren": [],
@@ -195,14 +195,12 @@ class TestD2TopNFiltering:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, (
-            "Rank-6 horse should be included in D2 top-7 candidate pool"
+        assert len(umatan_bets) == 0, (
+            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         )
-        horses_in_bets = [h for b in umatan_bets for h in b["horses"]]
-        assert 6 in horses_in_bets, "Horse 6 (AI rank 6) should appear in selected umatan bet"
 
     def test_ai_rank_7_horse_included_in_umatan_candidates(self):
-        """Horse ranked 7th by AI score can appear in selected umatan bets."""
+        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated even with rank-7 partner."""
         from backend.predictor.bet_optimizer import optimize_bets
 
         predictions = self._build_predictions_8_horses()
@@ -214,11 +212,9 @@ class TestD2TopNFiltering:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) >= 1, (
-            "Rank-7 horse should be included in D2 top-7 candidate pool"
+        assert len(umatan_bets) == 0, (
+            "D5: HONMEI_UMATAN_PARTNERS=0, no umatan bets expected"
         )
-        horses_in_bets = [h for b in umatan_bets for h in b["horses"]]
-        assert 7 in horses_in_bets, "Horse 7 (AI rank 7) should appear in selected umatan bet"
 
     def test_ai_rank_8_horse_excluded_from_candidates(self):
         """Horse ranked 8th by AI score must NOT appear in any selected bets."""

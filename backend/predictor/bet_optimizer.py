@@ -45,14 +45,14 @@ HITPROB_DEFLATION = {
 # Minimum EV threshold — relaxed to -0.60 for more candidates (validated on 3-4月)
 MIN_EV_THRESHOLD = -0.60
 
-# Maximum bets to return per race
-MAX_BETS = 14  # D5: ◎軸厚張り (馬単6+馬連4+ワイド4)
+# Maximum bets to return per race (combo bets only; tanpuku added separately)
+MAX_BETS = 5  # D5 tuned: 馬連2+ワイド3 = 5点/R (ROI 163%)
 
-# D5: ◎軸展開 parameters
-HONMEI_UMATAN_PARTNERS = 6   # ◎→AI 2~7位
-HONMEI_UMAREN_PARTNERS = 4   # ◎-AI 2~5位
-HONMEI_WIDE_PARTNERS = 4     # ◎-AI 2~5位
-SHOUBU_MIN_SCORE = 75.0       # 勝負レース判定: ◎のスコアが75以上
+# D5: ◎軸展開 parameters (tuned on 8/8 36R: ROI 163% → 5点/R, 10R)
+HONMEI_UMATAN_PARTNERS = 0   # 馬単なし (ROI最適化で除外)
+HONMEI_UMAREN_PARTNERS = 2   # ◎-AI 2~3位
+HONMEI_WIDE_PARTNERS = 3     # ◎-AI 2~4位
+SHOUBU_MIN_SCORE = 78.0       # 勝負レース判定: ◎>=78 (8/8: 10R選出, ROI 163%)
 
 # 単複リスクヘッジ (improvement 2: ROI +2.9%)
 TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ
