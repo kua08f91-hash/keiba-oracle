@@ -144,13 +144,19 @@ def _should_auto_freeze(race_id: str) -> bool:
 
 def _auto_freeze_and_cache(race_id: str, predictions: list, bets: list,
                            longshot, pattern: str):
-    """Auto-freeze: save predictions to DB as frozen (API-level fallback)."""
+    """Auto-freeze: save predictions to DB as frozen (API-level fallback).
+
+    IMPORTANT: Never overwrite an already-frozen cache. Once frozen, data is immutable.
+    """
     from backend._tz import now_utc
     db = get_session()
     try:
         cache = db.query(PredictionsCache).filter(
             PredictionsCache.race_id == race_id
         ).first()
+        # Never overwrite already-frozen data
+        if cache and cache.frozen:
+            return
         if not cache:
             cache = PredictionsCache(race_id=race_id)
             db.add(cache)
