@@ -44,14 +44,15 @@ from .factors import (
     calc_pace_position_advantage,
     calc_rotation_fitness,
     calc_bloodline_track_condition,
+    calc_value_drop,
 )
 
 # Analytical factor weights (non-market factors, must sum to ~1.0)
 # Optimized via 1,107-race historical data (2023-2024)
 # Constrained: max 30% per factor to prevent overfitting
 ANALYTICAL_WEIGHTS = {
-    "trackDirection": 0.0527,  # Reduced from 0.1027 to fund D6 new factors
-    "trackCondition": 0.1017,  # Reduced from 0.1217 to fund D6 new factors
+    "trackDirection": 0.0377,  # Reduced from 0.0527 (-0.015) to fund valueDrop
+    "trackCondition": 0.0817,  # Reduced from 0.1017 (-0.020) to fund valueDrop
     "trackSpecific": 0.0476,
     "jockeyAbility": 0.0552,  # Reduced from 0.0952 to fund D6 new factors
     "sameDistance": 0.0635,
@@ -77,6 +78,8 @@ ANALYTICAL_WEIGHTS = {
     "pacePositionAdvantage": 0.03,
     "rotationFitness": 0.02,
     "bloodlineTrackCondition": 0.02,
+    # Value Drop factor (前走好走+今走人気下落)
+    "valueDrop": 0.035,
 }
 # Defaults (22 keys, sum=1.0). When optimized_weights.json is loaded,
 # its values replace these entirely.
@@ -104,7 +107,8 @@ ALL_FACTOR_KEYS = ["marketScore", "pastPerformance", "jockeyAbility",
                    "speedFigure", "runningStyle", "daysSinceLast", "weightCarriedTrend",
                    "agari3f", "marginScore", "drawBias",
                    "jockeyCourseDistance", "pacePositionAdvantage",
-                   "rotationFitness", "bloodlineTrackCondition"]
+                   "rotationFitness", "bloodlineTrackCondition",
+                   "valueDrop"]
 
 
 class WeightedScoringModel(PredictionModel):
@@ -201,6 +205,9 @@ class WeightedScoringModel(PredictionModel):
                 ),
                 "bloodlineTrackCondition": calc_bloodline_track_condition(
                     sire, bms, track_condition, past_races
+                ),
+                "valueDrop": calc_value_drop(
+                    past_races, popularity, odds if odds else 0.0
                 ),
             }
 

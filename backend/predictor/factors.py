@@ -1107,6 +1107,75 @@ _KNOWN_MUD_SIRES: set[str] = {
 }
 
 
+def calc_value_drop(past_races: list, popularity: int | None, odds: float) -> float:
+    """Score based on form vs market discrepancy (value drop detection).
+
+    Detects horses that ran well recently but are undervalued by the market.
+    33K race analysis: 前走好走+今走6人気以下 → 単勝回収率103-125%.
+
+    Scoring:
+    - 前走1着 + 今走6番人気以下 → 80 (strong value, 125% ROI in data)
+    - 前走2-3着 + 今走6番人気以下 → 70 (moderate value)
+    - 前走4-5着 + 今走6番人気以下 → 65 (mild value, 103% ROI for 少頭数)
+    - 前走1-3着 + 今走4-5番人気 → 60 (slight undervaluation)
+    - 前走1-3着 + 今走1-3番人気 → 45 (market already reflects form - slight penalty to counter market_weight bias)
+    - No past races or no popularity data → 50 (neutral)
+    - 前走6着以下 → 50 (neutral, no form advantage)
+
+    Args:
+        past_races: List of past race dicts. [0] is most recent. Each has 'pos' key.
+        popularity: Current race popularity ranking (1=favorite, 18=longest shot)
+        odds: Current single-win odds (e.g. 5.0 means 5x payout)
+
+    Returns:
+        float: Score 0-100 (50 = neutral)
+    """
+    # Guard: invalid popularity → neutral
+    if not popularity or popularity <= 0:
+        return 50.0
+
+    # Guard: no past race data → neutral
+    if not past_races:
+        return 50.0
+
+    # Most recent finish position
+    recent_pos = past_races[0].get("pos", 0)
+
+    # Guard: unknown or invalid finish position → neutral
+    if not recent_pos or recent_pos <= 0:
+        return 50.0
+
+    # 前走6着以下 → no form advantage, neutral
+    if recent_pos >= 6:
+        return 50.0
+
+    # From here: recent_pos is 1-5 (good recent form)
+
+    # Value drop zone: 6番人気以下 (market significantly undervalues)
+    if popularity >= 6:
+        if recent_pos == 1:
+            return 80.0   # Strong value: 前走1着 + 6番人気以下
+        elif recent_pos <= 3:
+            return 70.0   # Moderate value: 前走2-3着 + 6番人気以下
+        else:
+            return 65.0   # Mild value: 前走4-5着 + 6番人気以下
+
+    # Slight undervaluation: 4-5番人気 + 前走1-3着
+    if popularity in (4, 5):
+        if recent_pos <= 3:
+            return 60.0   # Slight undervaluation
+        # 前走4-5着 + 4-5番人気 → neutral (not enough gap)
+        return 50.0
+
+    # 1-3番人気: market already prices in form
+    if popularity <= 3:
+        if recent_pos <= 3:
+            return 45.0   # Market already reflects good form (slight penalty)
+        return 50.0       # 前走4-5着 + top-3 popularity → neutral
+
+    return 50.0  # Fallback
+
+
 def calc_bloodline_track_condition(
     sire: str, bms: str, track_condition: str, past_races: list
 ) -> float:
