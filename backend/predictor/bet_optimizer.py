@@ -46,22 +46,22 @@ HITPROB_DEFLATION = {
 MIN_EV_THRESHOLD = -0.60
 
 # Maximum bets to return per race (combo bets only; tanpuku added separately)
-MAX_BETS = 6  # D5 dynamic: ワイド4 + 馬連0~1 + 馬単0~1 = 4~6点/R
+MAX_BETS = 6  # D5 dynamic: 馬単0~3 + 馬連0~2 + ワイド1 = 最大6点/R
 
-# D5 dynamic: レース条件別に券種を動的選択 (564R検証 ROI 224%)
-# ワイド◎-AI2~5位: 全条件でROI 200-400% → 常に採用
-# 馬連◎-AI2位: ◎score>=76で有効 → 条件付き採用
-# 馬単◎→AI2位: gap>=5 and ◎score>=78で有効 → 条件付き採用
-HONMEI_WIDE_PARTNERS = 4     # ◎-AI 2~5位 (ワイド4点: 全条件ROI 200%+)
-SHOUBU_MIN_SCORE = 74.0       # 勝負レース判定: ◎>=74 (564R検証, ROI 224%)
-UMAREN_MIN_SCORE = 76.0       # 馬連追加条件: ◎score>=76
-UMATAN_MIN_SCORE = 78.0       # 馬単追加条件: ◎score>=78
-UMATAN_MIN_GAP = 5.0          # 馬単追加条件: gap>=5
+# D5 dynamic: 馬単・馬連を軸に高配当を狙う
+# ワイドと複勝は払戻が少ないため最小限に抑える
+HONMEI_WIDE_PARTNERS = 1     # ◎-AI 2位のみ (ワイド1点: 保険)
+SHOUBU_MIN_SCORE = 74.0       # 勝負レース判定: ◎>=74
+UMAREN_MIN_SCORE = 74.0       # 馬連: 勝負レースなら常に採用
+UMATAN_MIN_SCORE = 74.0       # 馬単: 勝負レースなら常に採用
+UMATAN_MIN_GAP = 0.0          # 馬単: gap条件なし(勝負判定で絞り済み)
+HONMEI_UMATAN_PARTNERS = 3   # 馬単◎→AI 2~4位 (3点)
+HONMEI_UMAREN_PARTNERS = 2   # 馬連◎-AI 2~3位 (2点)
 
-# 単複リスクヘッジ (improvement 2: ROI +2.9%)
+# 単複リスクヘッジ (最小限)
 TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ
-TANPUKU_FUKUSHO_MIN_ODDS = 2.0  # 複勝は2倍以上のみ
-TANPUKU_RATIO = (1, 3)           # 単勝:複勝 = 1:3
+TANPUKU_FUKUSHO_MIN_ODDS = 6.0  # 複勝も6倍以上のみ (低配当複勝を排除)
+TANPUKU_RATIO = (1, 1)           # 単勝:複勝 = 1:1
 
 # ケリー基準 (improvement 1: 利益額6倍)
 KELLY_FRACTION = 0.5  # ハーフケリー
@@ -492,24 +492,28 @@ def optimize_bets(
         c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
         selected.append(c)
 
-    # ── Dynamic bet selection based on race conditions ──
+    # ── Dynamic bet selection: 馬単・馬連を軸に高配当狙い ──
     honmei_score = honmei["score"]
     gap_12 = honmei_score - ai_sorted[1]["score"] if len(ai_sorted) >= 2 else 0
 
-    # 馬単 ◎→AI 2位: only when ◎score>=78 AND gap>=5 (564R: ROI improves)
+    # 馬単 ◎→AI 2~4位 (高配当の主力)
     if honmei_score >= UMATAN_MIN_SCORE and gap_12 >= UMATAN_MIN_GAP:
-        if len(ai_sorted) >= 2:
-            partner_hn = ai_sorted[1]["horseNumber"]
+        for i in range(1, HONMEI_UMATAN_PARTNERS + 1):
+            if i >= len(ai_sorted):
+                break
+            partner_hn = ai_sorted[i]["horseNumber"]
             _try_add("umatan", [honmei_hn, partner_hn], True)
 
-    # 馬連 ◎-AI 2位: only when ◎score>=76 (564R: ROI 89-101%)
+    # 馬連 ◎-AI 2~3位 (中配当の安定枠)
     if honmei_score >= UMAREN_MIN_SCORE:
-        if len(ai_sorted) >= 2:
-            partner_hn = ai_sorted[1]["horseNumber"]
+        for i in range(1, HONMEI_UMAREN_PARTNERS + 1):
+            if i >= len(ai_sorted):
+                break
+            partner_hn = ai_sorted[i]["horseNumber"]
             pair = sorted([honmei_hn, partner_hn])
             _try_add("umaren", pair, False)
 
-    # ワイド ◎-AI 2~5位: always (564R: ROI 200-400% across all conditions)
+    # ワイド ◎-AI 2位のみ (保険1点)
     for i in range(1, HONMEI_WIDE_PARTNERS + 1):
         if i >= len(ai_sorted):
             break

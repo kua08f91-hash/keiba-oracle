@@ -211,8 +211,8 @@ class TestTanpukuHedge:
         assert "tansho" in types, f"Expected tansho in {types}"
 
     def test_high_odds_produces_fukusho_bet(self):
-        """◎ odds=8x (>=6x) → fukusho bet present."""
-        bets = self._run(tansho_odds=8.0, fukusho_odds=3.0)
+        """◎ odds=8x (>=6x) with fukusho>=6x → fukusho bet present."""
+        bets = self._run(tansho_odds=8.0, fukusho_odds=6.0)
         types = [b["type"] for b in bets]
         assert "fukusho" in types, f"Expected fukusho in {types}"
 
@@ -230,9 +230,9 @@ class TestTanpukuHedge:
         )
 
     def test_high_odds_fukusho_bet_size_is_three(self):
-        """◎ odds=8x → fukusho betSize == TANPUKU_RATIO[1] == 3."""
+        """◎ odds=8x with fukusho>=6x → fukusho betSize == TANPUKU_RATIO[1] == 1."""
         from backend.predictor.bet_optimizer import TANPUKU_RATIO
-        bets = self._run(tansho_odds=8.0, fukusho_odds=3.0)
+        bets = self._run(tansho_odds=8.0, fukusho_odds=6.0)
         fukusho_bets = [b for b in bets if b["type"] == "fukusho"]
         assert fukusho_bets, "No fukusho bets found"
         tanpuku_fukusho = [b for b in fukusho_bets if b.get("betSize") == TANPUKU_RATIO[1]]
@@ -244,18 +244,19 @@ class TestTanpukuHedge:
     # ── Threshold: 2x <= odds < 6x ────────────────────────────────────────
 
     def test_medium_odds_produces_fukusho_only(self):
-        """◎ odds=3x (2x<=odds<6x) → fukusho present, tansho absent."""
+        """◎ odds=3x (2x<=odds<6x) → no tanpuku bets (TANPUKU_FUKUSHO_MIN_ODDS=6.0)."""
         bets = self._run(tansho_odds=3.0, fukusho_odds=2.5)
         types = [b["type"] for b in bets]
-        assert "fukusho" in types, f"Expected fukusho in {types}"
         assert "tansho" not in types, f"Unexpected tansho in {types}"
+        assert "fukusho" not in types, f"Unexpected fukusho in {types}"
 
     def test_medium_odds_fukusho_bet_size_is_two(self):
-        """◎ odds=3x → fukusho-only betSize == 2."""
-        bets = self._run(tansho_odds=3.0, fukusho_odds=2.5)
+        """◎ odds=6x with fukusho=6x → fukusho betSize == TANPUKU_RATIO[1] == 1."""
+        from backend.predictor.bet_optimizer import TANPUKU_RATIO
+        bets = self._run(tansho_odds=6.0, fukusho_odds=6.0)
         fukusho_bets = [b for b in bets if b["type"] == "fukusho"]
         assert fukusho_bets, "No fukusho bets found"
-        assert fukusho_bets[0]["betSize"] == 2
+        assert fukusho_bets[0]["betSize"] == TANPUKU_RATIO[1]
 
     # ── Threshold: odds < 2x ──────────────────────────────────────────────
 
@@ -268,20 +269,20 @@ class TestTanpukuHedge:
         assert "fukusho" not in types, f"Unexpected fukusho when odds<2x: {types}"
 
     def test_exact_boundary_tansho_min_odds(self):
-        """◎ odds exactly == TANPUKU_TANSHO_MIN_ODDS (6.0) → tansho AND fukusho."""
-        from backend.predictor.bet_optimizer import TANPUKU_TANSHO_MIN_ODDS
-        bets = self._run(tansho_odds=TANPUKU_TANSHO_MIN_ODDS, fukusho_odds=3.0)
+        """◎ odds exactly == TANPUKU_TANSHO_MIN_ODDS (6.0) with fukusho>=6x → tansho AND fukusho."""
+        from backend.predictor.bet_optimizer import TANPUKU_TANSHO_MIN_ODDS, TANPUKU_FUKUSHO_MIN_ODDS
+        bets = self._run(tansho_odds=TANPUKU_TANSHO_MIN_ODDS, fukusho_odds=TANPUKU_FUKUSHO_MIN_ODDS)
         types = [b["type"] for b in bets]
         assert "tansho" in types
         assert "fukusho" in types
 
     def test_exact_boundary_fukusho_min_odds(self):
-        """◎ odds exactly == TANPUKU_FUKUSHO_MIN_ODDS (2.0) → fukusho only."""
+        """◎ tansho odds exactly == TANPUKU_FUKUSHO_MIN_ODDS (6.0) with fukusho=6x → tansho AND fukusho."""
         from backend.predictor.bet_optimizer import TANPUKU_FUKUSHO_MIN_ODDS
-        bets = self._run(tansho_odds=TANPUKU_FUKUSHO_MIN_ODDS, fukusho_odds=2.0)
+        bets = self._run(tansho_odds=TANPUKU_FUKUSHO_MIN_ODDS, fukusho_odds=TANPUKU_FUKUSHO_MIN_ODDS)
         types = [b["type"] for b in bets]
+        assert "tansho" in types
         assert "fukusho" in types
-        assert "tansho" not in types
 
     def test_just_below_fukusho_min_odds(self):
         """◎ odds = 1.9x (just below 2.0) → no tanpuku bets."""
@@ -454,11 +455,11 @@ class TestConstants:
 
     def test_tanpuku_fukusho_min_odds(self):
         from backend.predictor.bet_optimizer import TANPUKU_FUKUSHO_MIN_ODDS
-        assert TANPUKU_FUKUSHO_MIN_ODDS == 2.0
+        assert TANPUKU_FUKUSHO_MIN_ODDS == 6.0
 
     def test_tanpuku_ratio(self):
         from backend.predictor.bet_optimizer import TANPUKU_RATIO
-        assert TANPUKU_RATIO == (1, 3)
+        assert TANPUKU_RATIO == (1, 1)
 
     def test_kelly_fraction(self):
         from backend.predictor.bet_optimizer import KELLY_FRACTION

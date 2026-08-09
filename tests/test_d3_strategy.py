@@ -305,9 +305,9 @@ class TestD3UnchangedRanges:
 class TestD3ProducesMoreBetsThanD2:
     """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets regardless of odds."""
 
-    # Test 15: no umatan bets (HONMEI_UMATAN_PARTNERS=0)
+    # Test 15: umatan bets for ◎→AI 2~4位 (HONMEI_UMATAN_PARTNERS=3)
     def test_d3_accepts_35x_and_45x_that_d2_would_reject(self):
-        from backend.predictor.bet_optimizer import optimize_bets
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         odds_data = {
             "umatan": [
@@ -321,13 +321,13 @@ class TestD3ProducesMoreBetsThanD2:
         d3_bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         d3_umatan = [b for b in d3_bets if b["type"] == "umatan"]
 
-        assert len(d3_umatan) == 1, (
-            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
+        assert len(d3_umatan) == 2, (
+            f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 2 umatan bets (both [1,2] and [1,3] qualify)"
         )
 
     def test_d5_accepts_bets_above_5x_floor(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
-        from backend.predictor.bet_optimizer import optimize_bets
+        """D5: HONMEI_UMATAN_PARTNERS=3 — umatan for ◎→AI 2~4位 generated."""
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         odds_data = {
             "umatan": [
@@ -339,13 +339,13 @@ class TestD3ProducesMoreBetsThanD2:
         }
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
-        assert len(umatan_bets) == 1, (
-            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
+        assert len(umatan_bets) == 2, (
+            f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 2 umatan bets (both [1,2] and [1,3] qualify)"
         )
 
     def test_d3_combined_dead_zone_and_high_odds(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
-        from backend.predictor.bet_optimizer import optimize_bets
+        """D5: HONMEI_UMATAN_PARTNERS=3 — umatan for ◎→AI 2~4位; non-◎ pairs excluded."""
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         odds_data = {
             "umatan": [
@@ -359,6 +359,6 @@ class TestD3ProducesMoreBetsThanD2:
         bets = optimize_bets(_PREDICTIONS_7, odds_data, _race_info(), mc_samples=100)
         umatan_bets = [b for b in bets if b["type"] == "umatan"]
 
-        assert len(umatan_bets) == 1, (
-            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
+        assert len(umatan_bets) == 2, (
+            f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 2 honmei umatan ([1,2] and [1,3]); [2,3] excluded"
         )

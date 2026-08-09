@@ -131,17 +131,17 @@ class TestHonmeiUmatanTypeMax:
     """D5 allows up to 6 ◎-anchor umatan bets (fixed count per type)."""
 
     def test_all_three_honmei_umatan_selected_from_three(self):
-        """D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 honmei-anchor umatan selected from three."""
-        from backend.predictor.bet_optimizer import optimize_bets
+        """D5: HONMEI_UMATAN_PARTNERS=3 — all 3 honmei-anchor umatan selected from three."""
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
-        # Horse 1 = ◎; three viable ◎-anchor pairs available
+        # Horse 1 = ◎; three viable ◎-anchor pairs available (AI 2~4位)
         predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
                                          (5, 40), (6, 30), (7, 20)])
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 100.0),   # ◎-anchor
-                _odds_entry([1, 3], 150.0),   # ◎-anchor
-                _odds_entry([1, 4], 200.0),   # ◎-anchor
+                _odds_entry([1, 2], 100.0),   # ◎→AI 2位
+                _odds_entry([1, 3], 150.0),   # ◎→AI 3位
+                _odds_entry([1, 4], 200.0),   # ◎→AI 4位
             ],
             "umaren": [],
             "wide": [],
@@ -152,8 +152,8 @@ class TestHonmeiUmatanTypeMax:
             b for b in bets
             if b["type"] == "umatan" and b["horses"][0] == 1
         ]
-        assert len(honmei_umatan) == 1, (
-            f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet, got {len(honmei_umatan)}"
+        assert len(honmei_umatan) == 3, (
+            f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 3 umatan bets, got {len(honmei_umatan)}"
         )
 
     def test_type_max_is_six_for_umatan(self):
@@ -269,18 +269,18 @@ class TestOtherBetTypesUnaffected:
                                          (5, 40), (6, 30), (7, 20)])
         odds_data = {
             "umatan": [
-                _odds_entry([1, 2], 100.0),  # no umatan generated
+                _odds_entry([1, 2], 100.0),  # ◎→AI 2位
             ],
             "umaren": [],
             "wide": [
-                _odds_entry([1, 3], WIDE_OK),   # within range
+                _odds_entry([1, 2], WIDE_OK),   # ◎-AI 2位 (HONMEI_WIDE_PARTNERS=1)
             ],
         }
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         types = [b["type"] for b in bets]
-        # D5: HONMEI_UMATAN_PARTNERS=1 — 1 umatan generated; wide also selected
-        assert "umatan" in types, "D5: HONMEI_UMATAN_PARTNERS=1, 1 umatan expected"
+        # D5: HONMEI_UMATAN_PARTNERS=3 — umatan generated; HONMEI_WIDE_PARTNERS=1 — wide for AI 2位
+        assert "umatan" in types, "D5: HONMEI_UMATAN_PARTNERS=3, umatan expected"
         assert "wide" in types, "wide should be selected"
 
     def test_umaren_and_wide_selected_alongside_honmei_umatan(self):
@@ -415,8 +415,8 @@ class TestHonmeiUmatanSortedByOdds:
     """Within ◎-anchor umatan, highest-odds pairs are selected first."""
 
     def test_highest_odds_honmei_umatan_selected(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
-        from backend.predictor.bet_optimizer import optimize_bets
+        """D5: HONMEI_UMATAN_PARTNERS=3 — all 3 honmei-anchor umatan generated."""
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
                                          (5, 40), (6, 30), (7, 20)])
@@ -432,11 +432,11 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 1, f"D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan, got {len(honmei_umatan)}"
+        assert len(honmei_umatan) == 3, f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 3 umatan, got {len(honmei_umatan)}"
 
     def test_all_honmei_umatan_selected_within_cap(self):
-        """D5: HONMEI_UMATAN_PARTNERS=0 — no umatan bets generated."""
-        from backend.predictor.bet_optimizer import optimize_bets
+        """D5: HONMEI_UMATAN_PARTNERS=3 — all 3 honmei-anchor umatan generated within cap."""
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
                                          (5, 40), (6, 30), (7, 20)])
@@ -452,12 +452,12 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        assert len(honmei_umatan) == 1, (
-            "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
+        assert len(honmei_umatan) == HONMEI_UMATAN_PARTNERS, (
+            f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected {HONMEI_UMATAN_PARTNERS} umatan bets"
         )
 
     def test_honmei_umatan_order_descending_odds(self):
-        from backend.predictor.bet_optimizer import optimize_bets
+        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
 
         predictions = _make_predictions([(1, 90), (2, 70), (3, 60), (4, 50),
                                          (5, 40), (6, 30), (7, 20)])
@@ -472,8 +472,8 @@ class TestHonmeiUmatanSortedByOdds:
         bets = optimize_bets(predictions, odds_data, _race_info(), mc_samples=100)
 
         honmei_umatan = [b for b in bets if b["type"] == "umatan" and b["horses"][0] == 1]
-        # D5: HONMEI_UMATAN_PARTNERS=1 — exactly 1 umatan bet generated (highest-odds partner)
-        assert len(honmei_umatan) == 1, "D5: HONMEI_UMATAN_PARTNERS=1, expected 1 umatan bet"
+        # D5: HONMEI_UMATAN_PARTNERS=3 — both [1,2] and [1,3] qualify (AI 2位 and 3位)
+        assert len(honmei_umatan) == 2, f"D5: HONMEI_UMATAN_PARTNERS={HONMEI_UMATAN_PARTNERS}, expected 2 umatan bets (both qualify)"
 
 
 # ---------------------------------------------------------------------------
