@@ -918,3 +918,241 @@ def calc_draw_bias(post_position: int, head_count: int, surface: str = "",
 
     score = 50.0 + bias * (0.5 - norm_pos)
     return round(max(30, min(70, score)), 1)
+
+
+# ---------------------------------------------------------------------------
+# D6: 4 new analytical factors
+# ---------------------------------------------------------------------------
+
+def calc_jockey_course_distance(
+    jockey: str, course_code: str, distance: int, past_races: list
+) -> float:
+    """Jockey x Course x Distance 3-way affinity score.
+
+    Looks through past_races for entries matching the same course_code AND
+    the same distance category (sprint/mile/intermediate/stayer).
+
+    Scoring:
+      2+ wins  → 85
+      1 win    → 75
+      2+ places (no win) → 70
+      1 place  (no win)  → 60
+      no match → 50
+    """
+    if not past_races:
+        return 50.0
+
+    target_cat = _get_distance_category(distance)
+
+    wins = 0
+    places = 0
+    for race in past_races:
+        rc = race.get("course_code", "")
+        if rc != course_code:
+            continue
+        dist = race.get("distance", 0)
+        if not dist or _get_distance_category(dist) != target_cat:
+            continue
+        pos = race.get("pos", 0)
+        if pos == 1:
+            wins += 1
+        if 1 <= pos <= 3:
+            places += 1
+
+    if wins >= 2:
+        return 85.0
+    elif wins == 1:
+        return 75.0
+    elif places >= 2:
+        return 70.0
+    elif places == 1:
+        return 60.0
+    return 50.0
+
+
+def calc_pace_position_advantage(
+    past_races: list, entries: list, head_count: int
+) -> float:
+    """Race pace / position advantage based on running style mix.
+
+    Counts front-runners (逃げ/先行) across all entries (using most recent
+    past race for each).  Then scores this horse based on its own style
+    relative to the field mix.
+
+    Returns:
+      75  — <= 1 front-runner in field AND this horse is a front-runner
+      35  — >= 3 front-runners in field AND this horse is a front-runner
+      70  — >= 3 front-runners in field AND this horse is a closer
+      50  — otherwise (neutral)
+    """
+    FRONT_STYLES = {"逃げ", "先行"}
+    CLOSER_STYLES = {"差し", "追込"}
+
+    def _most_recent_style(prs: list) -> str:
+        for r in prs:
+            s = r.get("runningStyle", "")
+            if s:
+                return s
+        return ""
+
+    # Determine this horse's running style
+    this_style = _most_recent_style(past_races)
+
+    # Count front-runners in the full entries list
+    front_count = 0
+    for entry in entries:
+        if entry.get("isScratched"):
+            continue
+        style = _most_recent_style(entry.get("pastRaces", []))
+        if style in FRONT_STYLES:
+            front_count += 1
+
+    # No style data → neutral
+    if not this_style:
+        return 50.0
+
+    this_is_front = this_style in FRONT_STYLES
+    this_is_closer = this_style in CLOSER_STYLES
+
+    if front_count <= 1 and this_is_front:
+        return 75.0
+    if front_count >= 3 and this_is_front:
+        return 35.0
+    if front_count >= 3 and this_is_closer:
+        return 70.0
+    return 50.0
+
+
+def calc_rotation_fitness(
+    past_races: list, race_date: str, class_change: int
+) -> float:
+    """Rotation / interval fitness score.
+
+    Calculates days since last race, applies class change modifier and
+    winning form carry-over bonus.
+
+    Interval base scores:
+      < 14 days  → 55  (too soon)
+      14-35 days → 70  (optimal)
+      36-60 days → 65
+      61-90 days → 55
+      91+ days   → 45
+
+    Modifiers (additive):
+      class_change = +1 (class up)   → -5
+      class_change = -1 (class down) → +5
+      most recent race pos == 1       → +10
+    """
+    if not past_races:
+        return 50.0
+
+    last_race = past_races[0]
+    last_date_str = last_race.get("date", "")
+    if not last_date_str:
+        return 50.0
+
+    def _parse(s: str):
+        try:
+            parts = s.replace("/", ".").split(".")
+            if len(parts) == 3:
+                return _date_type(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
+            pass
+        return None
+
+    d_race = _parse(race_date)
+    d_last = _parse(last_date_str)
+    if d_race is None or d_last is None:
+        return 50.0
+
+    days = (d_race - d_last).days
+    if days < 0:
+        return 50.0
+
+    if days < 14:
+        base = 55.0
+    elif days <= 35:
+        base = 70.0
+    elif days <= 60:
+        base = 65.0
+    elif days <= 90:
+        base = 55.0
+    else:
+        base = 45.0
+
+    # Class change modifier
+    if class_change > 0:
+        base -= 5.0
+    elif class_change < 0:
+        base += 5.0
+
+    # Winning form carry-over
+    if last_race.get("pos") == 1:
+        base += 10.0
+
+    return float(base)
+
+
+# Known heavy-track sires: included here for the bloodline factor
+# (same sires are already in SIRE_HEAVY_TRACK with numeric ratings)
+_KNOWN_MUD_SIRES: set[str] = {
+    "ゴールドシップ",
+    "ハーツクライ",
+    "キングカメハメハ",
+    "ステイゴールド",
+    "オルフェーヴル",
+    "スクリーンヒーロー",
+    "エピファネイア",
+    "ルーラーシップ",
+}
+
+
+def calc_bloodline_track_condition(
+    sire: str, bms: str, track_condition: str, past_races: list
+) -> float:
+    """Bloodline x Track condition affinity.
+
+    On 良 / 稍重 → 50 (neutral).
+    On 重 / 不良:
+      1. Scan past_races for races on 重/不良.
+         - 1+ wins  → 80
+         - 1+ places (no win) → 70
+      2. If no past heavy data, check sire (then bms) against known mud sires
+         and return 60 (bonus) or 50 (neutral).
+    """
+    HEAVY_CONDITIONS = {"重", "不良"}
+
+    if track_condition not in HEAVY_CONDITIONS:
+        return 50.0
+
+    # 1. Scan past race history for heavy-track results
+    heavy_wins = 0
+    heavy_places = 0
+    for race in past_races:
+        cond = race.get("condition", "")
+        if cond not in HEAVY_CONDITIONS:
+            continue
+        pos = race.get("pos", 0)
+        if pos == 1:
+            heavy_wins += 1
+        if 1 <= pos <= 3:
+            heavy_places += 1
+
+    if heavy_wins >= 1:
+        return 80.0
+    if heavy_places >= 1:
+        return 70.0
+
+    # 2. Fall back to sire/bms bloodline profile
+    def _is_mud_sire(name: str) -> bool:
+        if not name:
+            return False
+        for ms in _KNOWN_MUD_SIRES:
+            if ms in name or name in ms:
+                return True
+        return False
+
+    if _is_mud_sire(sire) or _is_mud_sire(bms):
+        return 60.0
+
+    return 50.0

@@ -40,16 +40,20 @@ from .factors import (
     calc_margin_score,
     calc_pace_predict,
     calc_draw_bias,
+    calc_jockey_course_distance,
+    calc_pace_position_advantage,
+    calc_rotation_fitness,
+    calc_bloodline_track_condition,
 )
 
 # Analytical factor weights (non-market factors, must sum to ~1.0)
 # Optimized via 1,107-race historical data (2023-2024)
 # Constrained: max 30% per factor to prevent overfitting
 ANALYTICAL_WEIGHTS = {
-    "trackDirection": 0.1027,  # Reduced by 0.019 to fund drawBias increase
-    "trackCondition": 0.1217,
+    "trackDirection": 0.0527,  # Reduced from 0.1027 to fund D6 new factors
+    "trackCondition": 0.1017,  # Reduced from 0.1217 to fund D6 new factors
     "trackSpecific": 0.0476,
-    "jockeyAbility": 0.0952,
+    "jockeyAbility": 0.0552,  # Reduced from 0.0952 to fund D6 new factors
     "sameDistance": 0.0635,
     "sameSurface": 0.0635,
     "sameCondition": 0.0476,
@@ -67,7 +71,12 @@ ANALYTICAL_WEIGHTS = {
     "distanceAptitude": 0.0212,
     "agari3f": 0.0212,
     "marginScore": 0.0212,
-    "drawBias": 0.0400,  # Increased: course-specific track bias now active
+    "drawBias": 0.0400,
+    # D6 new factors
+    "jockeyCourseDistance": 0.04,
+    "pacePositionAdvantage": 0.03,
+    "rotationFitness": 0.02,
+    "bloodlineTrackCondition": 0.02,
 }
 # Defaults (22 keys, sum=1.0). When optimized_weights.json is loaded,
 # its values replace these entirely.
@@ -93,7 +102,9 @@ ALL_FACTOR_KEYS = ["marketScore", "pastPerformance", "jockeyAbility",
                    "ageAndSex", "weightCarried", "horseWeightChange",
                    "formTrend", "sameDistance", "sameSurface", "sameCondition",
                    "speedFigure", "runningStyle", "daysSinceLast", "weightCarriedTrend",
-                   "agari3f", "marginScore", "drawBias"]
+                   "agari3f", "marginScore", "drawBias",
+                   "jockeyCourseDistance", "pacePositionAdvantage",
+                   "rotationFitness", "bloodlineTrackCondition"]
 
 
 class WeightedScoringModel(PredictionModel):
@@ -146,6 +157,9 @@ class WeightedScoringModel(PredictionModel):
             if race_date and len(race_date) == 8 and race_date.isdigit():
                 race_date_norm = f"{race_date[:4]}.{race_date[4:6]}.{race_date[6:]}"
 
+            # Derive class_change for rotation_fitness from entry data
+            class_change = entry.get("classChange", 0)
+
             factors = {
                 "marketScore": calc_market_score(odds, popularity, head_count),
                 "pastPerformance": calc_past_performance(past_races),
@@ -174,6 +188,19 @@ class WeightedScoringModel(PredictionModel):
                     head_count, surface, distance, course_detail,
                     course_code=racecourse_code,
                     track_condition=track_condition,
+                ),
+                # D6 new factors
+                "jockeyCourseDistance": calc_jockey_course_distance(
+                    jockey, racecourse_code, distance, past_races
+                ),
+                "pacePositionAdvantage": calc_pace_position_advantage(
+                    past_races, entries, head_count
+                ),
+                "rotationFitness": calc_rotation_fitness(
+                    past_races, race_date_norm, class_change
+                ),
+                "bloodlineTrackCondition": calc_bloodline_track_condition(
+                    sire, bms, track_condition, past_races
                 ),
             }
 
