@@ -39,7 +39,7 @@ def _make_race_info(head_count: int) -> dict:
 # ---------------------------------------------------------------------------
 
 class TestARank:
-    """A = 勝負: ◎score >= SHOUBU_MIN_SCORE (79)."""
+    """A = 勝負: ◎score >= SHOUBU_MIN_SCORE (74)."""
 
     def test_high_score_returns_a(self):
         """◎score=90 → 'A'."""
@@ -48,14 +48,14 @@ class TestARank:
         assert result == "A"
 
     def test_score_exactly_at_threshold_returns_a(self):
-        """◎score=79.0 (exact threshold) → 'A'."""
-        predictions = _make_predictions([79.0, 60, 40])
+        """◎score=74.0 (exact threshold) → 'A'."""
+        predictions = _make_predictions([74.0, 60, 40])
         result = evaluate_bet_confidence(predictions, _make_race_info(12))
         assert result == "A"
 
     def test_score_just_above_threshold_returns_a(self):
-        """◎score=79.1 → 'A'."""
-        predictions = _make_predictions([79.1, 50, 30])
+        """◎score=74.1 → 'A'."""
+        predictions = _make_predictions([74.1, 50, 30])
         result = evaluate_bet_confidence(predictions, _make_race_info(18))
         assert result == "A"
 
@@ -85,7 +85,7 @@ class TestARank:
 # ---------------------------------------------------------------------------
 
 class TestCRank:
-    """C = SKIP: ◎score < SHOUBU_MIN_SCORE (78)."""
+    """C = SKIP: ◎score < SHOUBU_MIN_SCORE (74)."""
 
     def test_low_score_returns_c(self):
         """◎score=60 → 'C'."""
@@ -94,14 +94,14 @@ class TestCRank:
         assert result == "C"
 
     def test_score_just_below_threshold_returns_c(self):
-        """◎score=77.9 → 'C'."""
-        predictions = _make_predictions([77.9, 50, 30])
+        """◎score=73.9 → 'C'."""
+        predictions = _make_predictions([73.9, 50, 30])
         result = evaluate_bet_confidence(predictions, _make_race_info(12))
         assert result == "C"
 
-    def test_score_74_returns_c(self):
-        """◎score=74 → 'C'."""
-        predictions = _make_predictions([74, 60, 40])
+    def test_score_73_returns_c(self):
+        """◎score=73 → 'C'."""
+        predictions = _make_predictions([73, 60, 40])
         result = evaluate_bet_confidence(predictions, _make_race_info(10))
         assert result == "C"
 
@@ -165,6 +165,6 @@ class TestEdgeCases:
                 f"Unexpected grade '{result}' for predictions={predictions}"
             )
 
-    def test_shoubu_min_score_constant_is_75(self):
-        """SHOUBU_MIN_SCORE constant is 79."""
-        assert SHOUBU_MIN_SCORE == 79.0
+    def test_shoubu_min_score_constant_is_74(self):
+        """SHOUBU_MIN_SCORE constant is 74."""
+        assert SHOUBU_MIN_SCORE == 74.0

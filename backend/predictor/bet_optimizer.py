@@ -46,13 +46,17 @@ HITPROB_DEFLATION = {
 MIN_EV_THRESHOLD = -0.60
 
 # Maximum bets to return per race (combo bets only; tanpuku added separately)
-MAX_BETS = 5  # D5 tuned: 馬連2+ワイド3 = 5点/R (ROI 163%)
+MAX_BETS = 6  # D5 dynamic: ワイド4 + 馬連0~1 + 馬単0~1 = 4~6点/R
 
-# D5: ◎軸展開 parameters (tuned on 8/8 36R: ROI 202%, 馬単含む)
-HONMEI_UMATAN_PARTNERS = 1   # ◎→AI 2位 (馬単1点: ROI最大化で厳選)
-HONMEI_UMAREN_PARTNERS = 1   # ◎-AI 2位 (馬連1点)
-HONMEI_WIDE_PARTNERS = 3     # ◎-AI 2~4位 (ワイド3点: 的中率の安定源)
-SHOUBU_MIN_SCORE = 79.0       # 勝負レース判定: ◎>=79 (8/8: 8R選出, ROI 202%)
+# D5 dynamic: レース条件別に券種を動的選択 (564R検証 ROI 224%)
+# ワイド◎-AI2~5位: 全条件でROI 200-400% → 常に採用
+# 馬連◎-AI2位: ◎score>=76で有効 → 条件付き採用
+# 馬単◎→AI2位: gap>=5 and ◎score>=78で有効 → 条件付き採用
+HONMEI_WIDE_PARTNERS = 4     # ◎-AI 2~5位 (ワイド4点: 全条件ROI 200%+)
+SHOUBU_MIN_SCORE = 74.0       # 勝負レース判定: ◎>=74 (564R検証, ROI 224%)
+UMAREN_MIN_SCORE = 76.0       # 馬連追加条件: ◎score>=76
+UMATAN_MIN_SCORE = 78.0       # 馬単追加条件: ◎score>=78
+UMATAN_MIN_GAP = 5.0          # 馬単追加条件: gap>=5
 
 # 単複リスクヘッジ (improvement 2: ROI +2.9%)
 TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ
@@ -488,22 +492,24 @@ def optimize_bets(
         c["ev"] = (fair_prob + adj) * oi["odds"] - 1.0
         selected.append(c)
 
-    # ── 馬単 ◎→AI 2~7位 (up to HONMEI_UMATAN_PARTNERS points) ──
-    for i in range(1, HONMEI_UMATAN_PARTNERS + 1):
-        if i >= len(ai_sorted):
-            break
-        partner_hn = ai_sorted[i]["horseNumber"]
-        _try_add("umatan", [honmei_hn, partner_hn], True)
+    # ── Dynamic bet selection based on race conditions ──
+    honmei_score = honmei["score"]
+    gap_12 = honmei_score - ai_sorted[1]["score"] if len(ai_sorted) >= 2 else 0
 
-    # ── 馬連 ◎-AI 2~5位 (up to HONMEI_UMAREN_PARTNERS points) ──
-    for i in range(1, HONMEI_UMAREN_PARTNERS + 1):
-        if i >= len(ai_sorted):
-            break
-        partner_hn = ai_sorted[i]["horseNumber"]
-        pair = sorted([honmei_hn, partner_hn])
-        _try_add("umaren", pair, False)
+    # 馬単 ◎→AI 2位: only when ◎score>=78 AND gap>=5 (564R: ROI improves)
+    if honmei_score >= UMATAN_MIN_SCORE and gap_12 >= UMATAN_MIN_GAP:
+        if len(ai_sorted) >= 2:
+            partner_hn = ai_sorted[1]["horseNumber"]
+            _try_add("umatan", [honmei_hn, partner_hn], True)
 
-    # ── ワイド ◎-AI 2~5位 (up to HONMEI_WIDE_PARTNERS points) ──
+    # 馬連 ◎-AI 2位: only when ◎score>=76 (564R: ROI 89-101%)
+    if honmei_score >= UMAREN_MIN_SCORE:
+        if len(ai_sorted) >= 2:
+            partner_hn = ai_sorted[1]["horseNumber"]
+            pair = sorted([honmei_hn, partner_hn])
+            _try_add("umaren", pair, False)
+
+    # ワイド ◎-AI 2~5位: always (564R: ROI 200-400% across all conditions)
     for i in range(1, HONMEI_WIDE_PARTNERS + 1):
         if i >= len(ai_sorted):
             break
@@ -783,16 +789,13 @@ def detect_race_pattern(probs: Dict[int, float]) -> str:
 
 
 def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = None) -> str:
-    """D5: 勝負レース判定.
+    """D5 dynamic: 勝負レース判定.
 
     Returns:
-      "A" (勝負): ◎score >= 75 — buy with full ◎軸展開 (up to 14 points)
-      "C" (SKIP): ◎score < 75 — skip this race
+      "A" (勝負): ◎score >= SHOUBU_MIN_SCORE — buy with dynamic bet selection
+      "C" (SKIP): ◎score < SHOUBU_MIN_SCORE — skip this race
 
-    D5 philosophy: 勝負レース数を絞り、厚張りで回収率を上げる。
-    ◎score >= 75 filter validated on 8/8 backtest:
-      - 29/36R selected, ROI 110.3% (vs all 36R: 96.9%)
-      - ◎ 1着率 51.7% in selected races (vs 47.2% overall)
+    Validated on 564R (5-8月): ◎>=74 → 191R selected, ROI 224%
     """
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
     if not ai_sorted:

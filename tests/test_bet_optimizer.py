@@ -1711,18 +1711,16 @@ class TestS8Strategy:
         umatan_count = sum(1 for b in bets if b["type"] == "umatan")
         assert umatan_count <= 2, f"Expected max 2 umatan, got {umatan_count}"
 
-    def test_umaren_max_4_per_race(self):
-        """D5: at most 4 umaren bets (◎-AI 2~5位)."""
-        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMAREN_PARTNERS
+    def test_umaren_max_1_per_race(self):
+        """D5 dynamic: at most 1 umaren (◎-AI2位, conditional on score>=76)."""
+        from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(8)
         odds_data = {
             "umaren": [self._odds_entry(sorted([1, i]), 10.0 + i) for i in range(2, 9)],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umaren_count = sum(1 for b in bets if b["type"] == "umaren")
-        assert umaren_count <= HONMEI_UMAREN_PARTNERS, (
-            f"Expected max {HONMEI_UMAREN_PARTNERS} umaren, got {umaren_count}"
-        )
+        assert umaren_count <= 1, f"Expected max 1 umaren, got {umaren_count}"
 
     def test_wide_max_4_per_race(self):
         """D5: at most 4 wide bets (◎-AI 2~5位)."""
@@ -1737,18 +1735,16 @@ class TestS8Strategy:
             f"Expected max {HONMEI_WIDE_PARTNERS} wide, got {wide_count}"
         )
 
-    def test_umatan_max_6_per_race(self):
-        """D5: at most 6 umatan bets (◎→AI 2~7位)."""
-        from backend.predictor.bet_optimizer import optimize_bets, HONMEI_UMATAN_PARTNERS
+    def test_umatan_max_1_per_race(self):
+        """D5 dynamic: at most 1 umatan (◎→AI2位, conditional on score>=78+gap>=5)."""
+        from backend.predictor.bet_optimizer import optimize_bets
         predictions = self._make_predictions(10)
         odds_data = {
             "umatan": [self._odds_entry([1, i], 10.0 + i * 5) for i in range(2, 11)],
         }
         bets = optimize_bets(predictions, odds_data, self._race_info())
         umatan_count = sum(1 for b in bets if b["type"] == "umatan")
-        assert umatan_count <= HONMEI_UMATAN_PARTNERS, (
-            f"Expected max {HONMEI_UMATAN_PARTNERS} umatan, got {umatan_count}"
-        )
+        assert umatan_count <= 1, f"Expected max 1 umatan, got {umatan_count}"
 
     def test_overall_max_14_bets_default(self):
         """D5: total bets must not exceed MAX_BETS (14)."""
