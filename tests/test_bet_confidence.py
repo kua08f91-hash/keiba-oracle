@@ -48,8 +48,8 @@ class TestARank:
         assert result == "A"
 
     def test_score_exactly_at_threshold_returns_a(self):
-        """◎score=74.0 (exact threshold) → 'A'."""
-        predictions = _make_predictions([74.0, 60, 40])
+        """◎score=68.0 (exact threshold) → 'A'."""
+        predictions = _make_predictions([68.0, 60, 40])
         result = evaluate_bet_confidence(predictions, _make_race_info(12))
         assert result == "A"
 
@@ -94,14 +94,14 @@ class TestCRank:
         assert result == "C"
 
     def test_score_just_below_threshold_returns_c(self):
-        """◎score=73.9 → 'C'."""
-        predictions = _make_predictions([73.9, 50, 30])
+        """◎score=67.9 → 'C'."""
+        predictions = _make_predictions([67.9, 50, 30])
         result = evaluate_bet_confidence(predictions, _make_race_info(12))
         assert result == "C"
 
-    def test_score_73_returns_c(self):
-        """◎score=73 → 'C'."""
-        predictions = _make_predictions([73, 60, 40])
+    def test_score_67_returns_c(self):
+        """◎score=67 → 'C'."""
+        predictions = _make_predictions([67, 60, 40])
         result = evaluate_bet_confidence(predictions, _make_race_info(10))
         assert result == "C"
 
@@ -114,7 +114,7 @@ class TestCRank:
 
     def test_favourite_odds_low_but_score_below_threshold(self):
         """Even if odds suggest favourite, ◎score < 75 → 'C'."""
-        predictions = _make_predictions([70, 40, 20])
+        predictions = _make_predictions([60, 40, 20])
         entries = _make_entries({1: 1.5, 2: 8.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(8), entries)
         assert result == "C"
@@ -167,4 +167,4 @@ class TestEdgeCases:
 
     def test_shoubu_min_score_constant_is_74(self):
         """SHOUBU_MIN_SCORE constant is 74."""
-        assert SHOUBU_MIN_SCORE == 74.0
+        assert SHOUBU_MIN_SCORE == 68.0

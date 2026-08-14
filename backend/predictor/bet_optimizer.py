@@ -51,9 +51,9 @@ MAX_BETS = 6  # D5 dynamic: 馬単0~3 + 馬連0~2 + ワイド1 = 最大6点/R
 # D5 dynamic: 馬単・馬連を軸に高配当を狙う
 # ワイドと複勝は払戻が少ないため最小限に抑える
 HONMEI_WIDE_PARTNERS = 1     # ◎-AI 2位のみ (ワイド1点: 保険)
-SHOUBU_MIN_SCORE = 74.0       # 勝負レース判定: ◎>=74
-UMAREN_MIN_SCORE = 74.0       # 馬連: 勝負レースなら常に採用
-UMATAN_MIN_SCORE = 74.0       # 馬単: 勝負レースなら常に採用
+SHOUBU_MIN_SCORE = 68.0       # 勝負レース判定: ◎>=68 (27ファクター対応)
+UMAREN_MIN_SCORE = 68.0       # 馬連: 勝負レースなら常に採用
+UMATAN_MIN_SCORE = 68.0       # 馬単: 勝負レースなら常に採用
 UMATAN_MIN_GAP = 0.0          # 馬単: gap条件なし(勝負判定で絞り済み)
 HONMEI_UMATAN_PARTNERS = 3   # 馬単◎→AI 2~4位 (3点)
 HONMEI_UMAREN_PARTNERS = 2   # 馬連◎-AI 2~3位 (2点)

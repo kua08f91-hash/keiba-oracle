@@ -387,7 +387,7 @@ class TestFukushoConditions:
 class TestShoubuHantei:
     def test_score_74_returns_A(self):
         from backend.predictor.bet_optimizer import evaluate_bet_confidence
-        predictions = _make_predictions([74.0, 60.0, 50.0])
+        predictions = _make_predictions([68.0, 60.0, 50.0])
         result = evaluate_bet_confidence(predictions, {})
         assert result == "A", f"Expected 'A' for score=74, got {result!r}"
 
@@ -397,11 +397,11 @@ class TestShoubuHantei:
         result = evaluate_bet_confidence(predictions, {})
         assert result == "A"
 
-    def test_score_73_point_9_returns_C(self):
+    def test_score_67_point_9_returns_C(self):
         from backend.predictor.bet_optimizer import evaluate_bet_confidence
-        predictions = _make_predictions([73.9, 60.0, 50.0])
+        predictions = _make_predictions([67.9, 60.0, 50.0])
         result = evaluate_bet_confidence(predictions, {})
-        assert result == "C", f"Expected 'C' for score=73.9, got {result!r}"
+        assert result == "C", f"Expected 'C' for score=67.9, got {result!r}"
 
     def test_score_80_returns_A(self):
         from backend.predictor.bet_optimizer import evaluate_bet_confidence
@@ -420,11 +420,11 @@ class TestShoubuHantei:
         result = evaluate_bet_confidence([], {})
         assert result == "C"
 
-    def test_score_exactly_at_threshold_74(self):
+    def test_score_exactly_at_threshold_68(self):
         """Boundary value: exactly 74.0 must pass (>= not >)."""
         from backend.predictor.bet_optimizer import evaluate_bet_confidence, SHOUBU_MIN_SCORE
-        assert SHOUBU_MIN_SCORE == 74.0
-        predictions = _make_predictions([74.0, 50.0, 40.0])
+        assert SHOUBU_MIN_SCORE == 68.0
+        predictions = _make_predictions([68.0, 50.0, 40.0])
         assert evaluate_bet_confidence(predictions, {}) == "A"
 
 
