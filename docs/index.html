@@ -372,8 +372,8 @@ async function loadRaceDetail(id){
     try{
       const t=Date.now();
       const [cr, br] = await Promise.all([
-        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)}),
-        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)}).catch(()=>null),
+        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(10000)}),
+        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(10000)}).catch(()=>null),
       ]);
       if(!cr.ok)throw Error("API error");
       const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
@@ -420,9 +420,25 @@ async function loadRaceDetail(id){
   if(!usedApi && usedStatic){
     if(API){_startOddsPolling(id);}
   }
-  // If nothing was shown at all, show error
+  // If nothing was shown, retry static without start-time filter (show stale data is better than error)
+  if(!usedApi && !usedStatic && staticData){
+    for(const day of staticData){
+      for(const course of day.courses){
+        const race=course.races.find(r=>r.raceId===id);
+        if(race){
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          _betConfidence=race.betConfidence||'C';
+          renderDetail(race.raceInfo,race.pattern||"");renderBets();
+          usedStatic=true;break;
+        }
+      }
+      if(usedStatic)break;
+    }
+    if(usedStatic && API){_startOddsPolling(id);}
+  }
+  // If still nothing, show error with retry button
   if(!usedApi && !usedStatic){
-    el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">Failed to load</p><button onclick="showList()" class="mt-3 text-sm text-red-500 underline">Back</button></div>`;
+    el.innerHTML=`<div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center"><p class="text-red-600 font-bold">読み込みに失敗しました</p><button onclick="showDetail('${id}')" class="mt-3 px-4 py-1.5 bg-navy-800 text-white text-sm rounded-lg">再読み込み</button><button onclick="showList()" class="mt-3 ml-2 text-sm text-gray-500 underline">戻る</button></div>`;
   }
 }
 
