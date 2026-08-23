@@ -29,6 +29,7 @@ from backend.predictor.bet_optimizer import (
     find_odds_for_bet, implied_fair_odds, pick_longshot,
     evaluate_bet_confidence,
 )
+from backend.llm.analyzer import generate_race_analysis, is_available as llm_available
 
 DOCS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "docs", "data")
 API_H = {"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"}
@@ -180,12 +181,18 @@ def main():
                             c["ev"] = c["hitProb"] * est - 1
                     longshot = pick_longshot(cands, bets, probs)
 
+                # Generate AI analysis (batch mode — only if LLM is available)
+                analysis = ""
+                if llm_available() and not frames_missing:
+                    analysis = generate_race_analysis(info, entries, preds)
+
                 # Build race data
                 race_data = {
                     "raceId": rid,
                     "raceNumber": rnum,
                     "raceName": rname,
                     "raceInfo": info,
+                    "analysis": analysis,
                     "entries": [{
                         "horseNumber": e["horseNumber"],
                         "frameNumber": e.get("frameNumber", 0),

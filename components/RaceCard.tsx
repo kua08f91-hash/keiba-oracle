@@ -91,7 +91,7 @@ function getFactorColor(score: number): string {
 function FactorPanel({ factors }: { factors: FactorBreakdown }) {
   const entries = Object.entries(FACTOR_LABELS)
     .map(([key, label]) => {
-      const score = (factors as Record<string, number>)[key] ?? 0;
+      const score = (factors as unknown as Record<string, number>)[key] ?? 0;
       const weight = FACTOR_WEIGHTS[key] ?? 0;
       const contribution = score * weight;
       return { key, label, score, weight, contribution };
