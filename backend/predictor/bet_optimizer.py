@@ -56,8 +56,20 @@ EV_CORE_MAX_BETS = 5             # EV上位5点
 
 # Value Shot (Layer 2): 全レースで高オッズ穴狙い (馬単含む全券種)
 VALUE_SHOT_BET_TYPES = {"tansho", "umaren", "umatan", "wide", "sanrenpuku", "sanrentan"}
-VALUE_SHOT_MIN_ODDS = 5.0        # 最低オッズ (穴狙いなので低オッズ除外)
+VALUE_SHOT_MIN_ODDS = 20.0       # 最低オッズ (穴狙いなので20倍以上のみ)
 VALUE_SHOT_MAX_BETS = 5          # EV上位5点
+
+# オッズ上限キャップ (推定・異常値の排除)
+MAX_ODDS_CAP = {
+    "tansho": 200.0,
+    "umaren": 500.0,
+    "umatan": 1000.0,
+    "wide": 200.0,
+    "sanrenpuku": 1000.0,
+    "sanrentan": 5000.0,
+    "fukusho": 50.0,
+    "wakuren": 200.0,
+}
 
 # Legacy constants for backward compat
 HONMEI_WIDE_PARTNERS = 1
@@ -650,8 +662,15 @@ def _ev_select(candidates: List[Dict], odds_data: Dict,
         if oi["odds"] < min_odds:
             continue
 
+        raw_odds = oi["odds"]
+
+        # オッズ上限キャップ (99999倍等の異常値を排除)
+        cap = MAX_ODDS_CAP.get(c["type"], 500.0)
+        if raw_odds > cap:
+            continue  # キャップ超えは候補から除外
+
         bet = dict(c)
-        bet["odds"] = oi["odds"]
+        bet["odds"] = raw_odds
         bet["payout"] = oi["payout"]
         bet["hasRealOdds"] = True
         if "oddsMin" in oi:
@@ -660,11 +679,7 @@ def _ev_select(candidates: List[Dict], odds_data: Dict,
             bet["oddsMax"] = oi["oddsMax"]
 
         # EV = hitProb * odds - 1
-        # 推定オッズには縮小係数を適用 (実オッズは信頼、推定は保守的に)
-        odds_for_ev = oi["odds"]
-        if not odds_data or bet["type"] not in odds_data:
-            odds_for_ev *= ESTIMATED_ODDS_SHRINKAGE
-        bet["ev"] = bet["hitProb"] * odds_for_ev - 1.0
+        bet["ev"] = bet["hitProb"] * raw_odds - 1.0
         scored.append(bet)
 
     # Sort by EV descending, pick top N
