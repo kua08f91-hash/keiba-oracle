@@ -29,7 +29,7 @@ from backend.scraper.netkeiba import fetch_race_list, fetch_race_card, fetch_ped
 from backend.scraper.odds import fetch_combination_odds, fetch_live_combination_odds
 from backend.predictor.ml_scoring import MLScoringModel
 from backend.predictor.bet_optimizer import (
-    optimize_bets, detect_race_pattern, scores_to_probabilities,
+    optimize_bets, optimize_bets_dual, detect_race_pattern, scores_to_probabilities,
     generate_candidates, monte_carlo_finish, estimate_hit_probabilities,
     find_odds_for_bet, implied_fair_odds, pick_longshot,
     evaluate_bet_confidence,
@@ -391,8 +391,11 @@ def _compute_live(race_id: str, include_bets: bool = False):
     # Compute bets if requested or if auto-freeze needed
     # But skip if already frozen in DB (prevents post-race recomputation)
     bets = []
+    core_bets = []
+    value_bets = []
     longshot = None
     pattern = ""
+    layer1_active = False
     already_frozen = _get_cached_predictions(race_id)
     if already_frozen and already_frozen.get("frozen"):
         # Race was frozen by worker but _compute_live reached here
@@ -419,27 +422,14 @@ def _compute_live(race_id: str, include_bets: bool = False):
         except Exception:
             pass
 
-        bets = optimize_bets(predictions, odds_data, data["race_info"])
-
-        hc = data["race_info"].get("headCount", 16)
-        probs = scores_to_probabilities(predictions, hc)
-        pattern = detect_race_pattern(probs)
-
-        import random
-        rng = random.Random(42)
-        cands = generate_candidates(probs, top_n=min(5, len(probs)))
-        fin = monte_carlo_finish(probs, 5000, rng=rng)
-        cands = estimate_hit_probabilities(fin, cands)
-        for c in cands:
-            oi = find_odds_for_bet(c, odds_data)
-            if oi:
-                c["odds"] = oi["odds"]
-                c["ev"] = c["hitProb"] * oi["odds"] - 1
-            else:
-                est = implied_fair_odds(c["hitProb"])
-                c["odds"] = round(est, 1)
-                c["ev"] = c["hitProb"] * est - 1
-        longshot = pick_longshot(cands, bets, probs)
+        # D6 Dual Layer optimizer
+        dual = optimize_bets_dual(predictions, odds_data, data["race_info"], entries=entries)
+        bets = dual["core_bets"] + dual["value_bets"]  # Combined for legacy compat
+        longshot = dual["longshot"]
+        pattern = dual["pattern"]
+        core_bets = dual["core_bets"]
+        value_bets = dual["value_bets"]
+        layer1_active = dual["layer1_active"]
 
         if should_freeze:
             _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
@@ -484,9 +474,12 @@ def _compute_live(race_id: str, include_bets: bool = False):
         "entries": entries,
         "predictions": predictions,
         "bets": bets,
+        "coreBets": core_bets if include_bets or should_freeze else [],
+        "valueBets": value_bets if include_bets or should_freeze else [],
         "longshot": longshot,
         "pattern": pattern,
         "betConfidence": bet_conf,
+        "layer1Active": layer1_active if include_bets or should_freeze else False,
         "analysis": analysis,
         "frozen": should_freeze if (include_bets or should_freeze) else False,
         "updatedAt": None,

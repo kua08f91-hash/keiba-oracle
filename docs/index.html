@@ -353,7 +353,7 @@ async function loadRaceDetail(id){
           const st=race.raceInfo?.startTime||'';
           const now=new Date();const nowHM=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
           if(st&&nowHM>st){break;}// Race started — skip static, wait for API frozen data
-          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;_coreBets=race.coreBets||[];_valueBets=race.valueBets||[];_layer1Active=race.layer1Active||false;
           renderDetail(race.raceInfo,race.pattern||"");
           const pb=document.getElementById("detail-pattern");
           if(pb&&race.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[race.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=race.pattern;}
@@ -380,7 +380,7 @@ async function loadRaceDetail(id){
       renderDetail(c.raceInfo,"");
       // Apply bets from parallel fetch
       if(br&&br.ok){
-        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
+        const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';_coreBets=bd?.coreBets||[];_valueBets=bd?.valueBets||[];_layer1Active=bd?.layer1Active||false;if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -426,7 +426,7 @@ async function loadRaceDetail(id){
       for(const course of day.courses){
         const race=course.races.find(r=>r.raceId===id);
         if(race){
-          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;
+          dE=race.entries||[];dP=race.predictions||[];dB=race.bets||[];dLongshot=race.longshot||null;_coreBets=race.coreBets||[];_valueBets=race.valueBets||[];_layer1Active=race.layer1Active||false;
           _betConfidence=race.betConfidence||'C';
           renderDetail(race.raceInfo,race.pattern||"");renderBets();
           usedStatic=true;break;
@@ -530,7 +530,7 @@ async function _refreshLiveOdds(raceId){
     renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
     try{
       const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
-      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
+      if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';_coreBets=bd?.coreBets||[];_valueBets=bd?.valueBets||[];_layer1Active=bd?.layer1Active||false;if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
       }
@@ -568,13 +568,23 @@ function renderDetail(info,pat){
       <span class="text-gray-500 font-bold">△次点</span>
       <span class="text-gray-300 ml-auto text-[10px]">Score列クリックで詳細</span>
     </div>
+    <div id="core-bets-section" class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden" style="display:none">
+      <div class="bg-gradient-to-r from-red-700 to-red-900 px-4 py-2.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h2 class="text-white font-black text-sm tracking-wide">EV CORE</h2>
+          <span class="bg-white/20 text-white text-[9px] font-bold px-2 py-0.5 rounded">堅実軸</span>
+        </div>
+        <span id="detail-confidence"></span>
+      </div>
+      <div id="core-bets" class="divide-y divide-gray-100"></div>
+    </div>
     <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
       <div class="bg-navy-900 px-4 py-2.5 flex items-center justify-between">
-        <h2 class="text-gold-400 font-black text-sm tracking-wide">AI OPTIMAL BETS</h2>
         <div class="flex items-center gap-2">
-          <span id="detail-confidence"></span>
-          <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+          <h2 class="text-gold-400 font-black text-sm tracking-wide">VALUE SHOT</h2>
+          <span class="bg-white/10 text-gold-400 text-[9px] font-bold px-2 py-0.5 rounded">穴狙い</span>
         </div>
+        <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
       </div>
       <div id="bet-summary" class="px-4 py-1.5 bg-navy-800 text-[11px] flex items-center gap-3"></div>
       <div id="bets" class="divide-y divide-gray-100"></div>
@@ -627,14 +637,7 @@ function renderTable(){
   document.getElementById('racecard').innerHTML=h;
 }
 
-let _betConfidence='C';
-function renderBets(){
-  const bets=dB;
-  // Confidence label
-  const confEl=document.getElementById('detail-confidence');
-  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':_betConfidence==='C'?'<span class="bg-blue-500/60 text-white text-[9px] font-black px-2 py-0.5 rounded">SKIP</span>':'';}
-  if(!bets||!bets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';document.getElementById('bet-summary').style.display='none';return;}
-  document.getElementById('bet-summary').style.display='none';
+function _renderBetList(bets){
   const rc=["from-gold-400 to-gold-600","from-gray-300 to-gray-400","from-amber-300 to-amber-500","from-gray-200 to-gray-300","from-gray-200 to-gray-300"];
   const tc={tansho:"bg-red-100 text-red-700",fukusho:"bg-blue-100 text-blue-700",umaren:"bg-purple-100 text-purple-700",wide:"bg-teal-100 text-teal-700",sanrenpuku:"bg-emerald-100 text-emerald-700",sanrentan:"bg-orange-100 text-orange-700"};
   let h='';
@@ -643,9 +646,36 @@ function renderBets(){
     const ev=b.ev||0;const evC=ev>0?"bg-emerald-100 text-emerald-700 border border-emerald-200":ev>-0.1?"bg-amber-100 text-amber-700 border border-amber-200":"bg-gray-100 text-gray-500 border border-gray-200";
     const hasOdds=b.odds&&b.odds>0;
     const evLabel=hasOdds?`EV ${ev>0?'+':''}${(ev*100).toFixed(0)}%`:'Score推奨';
-    const evMult=ev>0.1?3:ev>0?2:1;const multC=evMult>=3?'bg-red-600 text-white':evMult>=2?'bg-navy-800 text-gold-400':'bg-gray-200 text-gray-600';const betLabel=`<span class="${multC} px-1.5 py-0.5 rounded text-[10px] font-black">×${evMult}</span>`;
+    const bs=b.betSize||1;const multC=bs>=3?'bg-red-600 text-white':bs>=2?'bg-navy-800 text-gold-400':'bg-gray-200 text-gray-600';const betLabel=`<span class="${multC} px-1.5 py-0.5 rounded text-[10px] font-black">×${bs}</span>`;
     h+=`<div class="px-4 py-2.5 ${i===0?'bg-gradient-to-r from-amber-50 to-white border-l-4 border-l-gold-500':''}"><div class="flex items-start gap-2.5"><span class="flex-shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-b ${rc[i]||rc[4]} text-white text-[10px] font-black shadow">${b.rank||i+1}</span><div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 flex-wrap mb-0.5"><span class="px-1.5 py-0.5 rounded text-[10px] font-black ${tc[b.type]||'bg-gray-100'}">${b.typeLabel||b.type}</span>${names.join('<span class="text-gray-300 text-[10px]">-</span>')}</div><div class="flex items-center gap-2.5 text-[11px]">${betLabel}<span class="${evC} px-1.5 py-0.5 rounded font-bold">${evLabel}</span>${hasOdds?`<span class="text-amber-700 font-bold">${b.oddsMin&&b.oddsMax&&b.oddsMin!==b.oddsMax?b.oddsMin.toFixed(1)+'-'+b.oddsMax.toFixed(1):b.odds.toFixed?b.odds.toFixed(1):b.odds}倍</span>`:'<span class="text-gray-300">オッズ未確定</span>'}${b.hitProb&&b.hitProb>0?`<span class="text-gray-400">的中${(b.hitProb*100).toFixed(1)}%</span>`:''}</div></div></div></div>`;
   });
+  return h;
+}
+let _betConfidence='C';
+let _coreBets=[];
+let _valueBets=[];
+let _layer1Active=false;
+function renderBets(){
+  const bets=dB;
+  // Confidence label
+  const confEl=document.getElementById('detail-confidence');
+  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':_betConfidence==='C'?'<span class="bg-blue-500/60 text-white text-[9px] font-black px-2 py-0.5 rounded">SKIP</span>':'';}
+  // Core bets section (Layer 1)
+  const coreSection=document.getElementById('core-bets-section');
+  const coreEl=document.getElementById('core-bets');
+  if(coreSection&&coreEl){
+    if(_coreBets&&_coreBets.length>0){
+      coreSection.style.display='';
+      coreEl.innerHTML=_renderBetList(_coreBets);
+    } else {
+      coreSection.style.display='none';
+    }
+  }
+  // Value bets = use remaining bets (or valueBets if available)
+  const valueBets=_valueBets&&_valueBets.length>0?_valueBets:bets;
+  if(!valueBets||!valueBets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';document.getElementById('bet-summary').style.display='none';return;}
+  document.getElementById('bet-summary').style.display='none';
+  let h=_renderBetList(valueBets);
   // Longshot (穴場券)
   if(dLongshot){
     const b=dLongshot;

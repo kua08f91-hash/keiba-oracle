@@ -24,7 +24,7 @@ from backend.scraper.netkeiba import fetch_race_list, fetch_race_card
 from backend.scraper.odds import estimate_from_entries, fetch_combination_odds, fetch_live_combination_odds
 from backend.predictor.ml_scoring import MLScoringModel
 from backend.predictor.bet_optimizer import (
-    optimize_bets, detect_race_pattern, scores_to_probabilities,
+    optimize_bets, optimize_bets_dual, detect_race_pattern, scores_to_probabilities,
     generate_candidates, monte_carlo_finish, estimate_hit_probabilities,
     find_odds_for_bet, implied_fair_odds, pick_longshot,
     evaluate_bet_confidence,
@@ -150,36 +150,25 @@ def main():
                     od.update(live_od)  # Real odds override estimates
 
                 # Skip bet generation and marks if frame numbers not confirmed
+                core_bets = []
+                value_bets = []
+                layer1_active = False
+                longshot = None
+                pattern = ""
                 if frames_missing:
                     bets = []
                     for p in preds:
                         p["mark"] = ""
                         p["score"] = 0
                 else:
-                    bets = optimize_bets(preds, od, info, entries=entries)
-
-                # Pattern
-                head_count = info.get("headCount", 16)
-                probs = scores_to_probabilities(preds, head_count)
-                pattern = detect_race_pattern(probs) if len(probs) >= 3 else ""
-
-                # Longshot (skip if frames not confirmed)
-                longshot = None
-                if len(probs) >= 3 and not frames_missing:
-                    rng = random.Random(42)
-                    cands = generate_candidates(probs, top_n=min(5, len(probs)))
-                    fin = monte_carlo_finish(probs, 5000, rng=rng)
-                    cands = estimate_hit_probabilities(fin, cands)
-                    for c in cands:
-                        oi = find_odds_for_bet(c, od)
-                        if oi:
-                            c["odds"] = oi["odds"]
-                            c["ev"] = c["hitProb"] * oi["odds"] - 1
-                        else:
-                            est = implied_fair_odds(c["hitProb"])
-                            c["odds"] = round(est, 1)
-                            c["ev"] = c["hitProb"] * est - 1
-                    longshot = pick_longshot(cands, bets, probs)
+                    # D6 Dual Layer optimizer
+                    dual = optimize_bets_dual(preds, od, info, entries=entries)
+                    bets = dual["core_bets"] + dual["value_bets"]
+                    longshot = dual["longshot"]
+                    pattern = dual["pattern"]
+                    core_bets = dual["core_bets"]
+                    value_bets = dual["value_bets"]
+                    layer1_active = dual["layer1_active"]
 
                 # Generate AI analysis (batch mode — only if LLM is available)
                 analysis = ""
@@ -215,12 +204,16 @@ def main():
                         "factors": p.get("factors", {}),
                     } for p in preds],
                     "bets": bets,
+                    "coreBets": core_bets if not frames_missing else [],
+                    "valueBets": value_bets if not frames_missing else [],
+                    "layer1Active": layer1_active if not frames_missing else False,
                     "betConfidence": evaluate_bet_confidence(preds, info, entries) if not frames_missing else "C",
                     "longshot": longshot,
                     "pattern": pattern,
                 }
                 course_data["races"].append(race_data)
-                print(f"  {s['name']}{rnum:2d}R: {len(entries)}頭 {len(bets)}買目")
+                l1 = f" L1:{len(core_bets)}" if not frames_missing and layer1_active else ""
+                print(f"  {s['name']}{rnum:2d}R: {len(entries)}頭 {len(bets)}買目{l1}")
 
             if course_data["races"]:
                 day_data["courses"].append(course_data)

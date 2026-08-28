@@ -576,14 +576,16 @@ class TestOptimizedBetsLiveComputation:
         return stack, mock_frc, mock_pred, mock_opt
 
     def test_no_cache_calls_optimize_bets(self):
-        """No cache: optimize_bets must be called to produce live bets."""
+        """No cache: optimize_bets_dual must be called to produce live bets."""
         fetch_data = _make_fetch_race_card_data()
+        dual_result = {"core_bets": [], "value_bets": [], "longshot": None,
+                       "pattern": "", "layer1_active": False, "honmei_odds": 0}
 
         with (
             patch("backend.main._get_cached_predictions", return_value=None),
             patch("backend.main.fetch_race_card", return_value=fetch_data),
             patch("backend.main.predictor") as mock_pred,
-            patch("backend.main.optimize_bets", return_value=[]) as mock_opt,
+            patch("backend.main.optimize_bets_dual", return_value=dual_result) as mock_opt,
             patch("backend.main._fetch_live_combination_odds", return_value={}),
             patch("backend.scraper.odds.estimate_from_entries", return_value={}),
         ):
@@ -599,12 +601,14 @@ class TestOptimizedBetsLiveComputation:
         cached = _make_cached(frozen=False, bets=[{"type": "sanrentan"}])
         fetch_data = _make_fetch_race_card_data()
         live_bets = [{"type": "umaren", "horses": [1, 3], "odds": 30.0}]
+        dual_result = {"core_bets": [], "value_bets": live_bets, "longshot": None,
+                       "pattern": "", "layer1_active": False, "honmei_odds": 0}
 
         with (
             patch("backend.main._get_cached_predictions", return_value=cached),
             patch("backend.main.fetch_race_card", return_value=fetch_data),
             patch("backend.main.predictor") as mock_pred,
-            patch("backend.main.optimize_bets", return_value=live_bets),
+            patch("backend.main.optimize_bets_dual", return_value=dual_result),
             patch("backend.main._fetch_live_combination_odds", return_value={}),
             patch("backend.scraper.odds.estimate_from_entries", return_value={}),
         ):

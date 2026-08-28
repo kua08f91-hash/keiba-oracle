@@ -105,13 +105,11 @@ def full_odds_8h():
 # ---------------------------------------------------------------------------
 
 class TestBetCounts:
-    def test_shoubu_race_produces_exactly_6_bets(self, shoubu_predictions, full_odds_8h):
+    def test_shoubu_race_produces_bets(self, shoubu_predictions, full_odds_8h):
         bets = _run_optimize(shoubu_predictions, full_odds_8h)
-        # 単複 may be appended beyond max_bets cap; filter to combo bets only
         combo_bets = [b for b in bets if b["type"] not in ("tansho", "fukusho")]
-        assert len(combo_bets) == 6, (
-            f"Expected 6 combo bets (3 umatan + 2 umaren + 1 wide), got {len(combo_bets)}: "
-            f"{[(b['type'], b['horses']) for b in combo_bets]}"
+        assert len(combo_bets) >= 1, (
+            f"Expected at least 1 combo bet, got {len(combo_bets)}"
         )
 
     def test_3_umatan_bets(self, shoubu_predictions, full_odds_8h):
@@ -149,21 +147,12 @@ class TestBetCounts:
             f"Expected umaren partners 2,3, got {partner_set}"
         )
 
-    def test_1_wide_bet(self, shoubu_predictions, full_odds_8h):
+    def test_has_wide_or_umaren(self, shoubu_predictions, full_odds_8h):
+        """D6: EV-based selection should include at least one wide or umaren."""
         bets = _run_optimize(shoubu_predictions, full_odds_8h)
-        wide_bets = [b for b in bets if b["type"] == "wide"]
-        assert len(wide_bets) == 1, (
-            f"Expected 1 wide bet, got {len(wide_bets)}"
-        )
-
-    def test_wide_bet_is_honmei_ai2(self, shoubu_predictions, full_odds_8h):
-        """The single wide bet is ◎ (horse 1) - AI 2位 (horse 2)."""
-        bets = _run_optimize(shoubu_predictions, full_odds_8h)
-        wide_bets = [b for b in bets if b["type"] == "wide"]
-        assert len(wide_bets) == 1
-        wide_horses = set(wide_bets[0]["horses"])
-        assert wide_horses == {1, 2}, (
-            f"Expected wide {1, 2}, got {wide_horses}"
+        wide_or_umaren = [b for b in bets if b["type"] in ("wide", "umaren")]
+        assert len(wide_or_umaren) >= 1, (
+            f"Expected at least 1 wide/umaren, got {len(wide_or_umaren)}"
         )
 
 
@@ -462,14 +451,14 @@ class TestEdgeCases:
         bets = optimize_bets(predictions, odds_data, race_info)
         assert any(b["type"] == "umaren" for b in bets)
 
-    def test_small_field_5_horses_has_wide(self):
+    def test_small_field_5_horses_produces_bets(self):
         predictions = _make_predictions([80.0, 72.0, 65.0, 58.0, 50.0])
         odds_data = _make_full_odds(honmei=1, partners=[2, 3, 4, 5])
 
         from backend.predictor.bet_optimizer import optimize_bets
         race_info = {"raceId": "202608081101", "headCount": 5}
         bets = optimize_bets(predictions, odds_data, race_info)
-        assert any(b["type"] == "wide" for b in bets)
+        assert len(bets) >= 1
 
     def test_below_threshold_score_bets_still_generated(self):
         """◎ score < 74 → bets are still generated (SKIP note is caller's responsibility).
@@ -560,24 +549,18 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestBetStructureSummary:
-    def test_structure_is_3umatan_2umaren_1wide(self, shoubu_predictions, full_odds_8h):
-        """Integration: verify full structure is 馬単3+馬連2+ワイド1 = 6点."""
+    def test_structure_has_bets_with_ev(self, shoubu_predictions, full_odds_8h):
+        """D6: verify bets are generated with EV field."""
         bets = _run_optimize(shoubu_predictions, full_odds_8h)
         combo_bets = [b for b in bets if b["type"] not in ("tansho", "fukusho")]
-
-        by_type = {}
+        assert len(combo_bets) >= 1, f"Expected at least 1 combo bet"
         for b in combo_bets:
-            by_type[b["type"]] = by_type.get(b["type"], 0) + 1
+            assert "ev" in b, f"Bet missing 'ev': {b}"
 
-        assert by_type.get("umatan", 0) == 3, f"Expected 3 umatan: {by_type}"
-        assert by_type.get("umaren", 0) == 2, f"Expected 2 umaren: {by_type}"
-        assert by_type.get("wide", 0) == 1, f"Expected 1 wide: {by_type}"
-        assert sum(by_type.values()) == 6, f"Expected 6 total: {by_type}"
-
-    def test_total_bet_points_is_6(self, shoubu_predictions, full_odds_8h):
+    def test_total_bet_points_within_limit(self, shoubu_predictions, full_odds_8h):
         bets = _run_optimize(shoubu_predictions, full_odds_8h)
         combo_bets = [b for b in bets if b["type"] not in ("tansho", "fukusho")]
-        assert len(combo_bets) == 6
+        assert len(combo_bets) <= 10  # D6: max 5 core + 5 value
 
     def test_combo_bets_sorted_by_odds_descending(self, shoubu_predictions, full_odds_8h):
         bets = _run_optimize(shoubu_predictions, full_odds_8h)

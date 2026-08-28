@@ -1,13 +1,10 @@
-"""Dynamic per-race betting optimizer (D5 — ◎軸厚張り strategy).
+"""Dynamic per-race betting optimizer (D6 — Dual Layer strategy).
 
-Generates ◎-anchor bets across 馬単/馬連/ワイド, estimates hit probability
-via softmax + Monte Carlo simulation, and selects bets on 勝負レース only.
+Two-layer EV-driven strategy:
+  Layer 1 (EV Core): ◎が2-4倍帯 → 単勝/馬連/ワイド/3連複からEV上位5点
+  Layer 2 (Value Shot): 全レース → 高オッズ穴狙い+longshot EV上位5点
 
-D5 Strategy (validated on 8/8 36R backtest: ROI 110.3% vs D4 0.0%):
-  - ◎軸展開: 馬単◎→AI2~7位 + 馬連◎-AI2~5位 + ワイド◎-AI2~5位
-  - 勝負レース絞り込み: ◎score >= 75 のみ購入
-  - 厚張り: MAX 14点/レース (D4: 3点→D5: 14点)
-  - ROI保護: 低配当除外 (馬単5x, 馬連3x, ワイド2.5x)
+Both layers select bets purely by EV ranking — no fixed bet types or partners.
 """
 from __future__ import annotations
 
@@ -45,23 +42,33 @@ HITPROB_DEFLATION = {
 # Minimum EV threshold — relaxed to -0.60 for more candidates (validated on 3-4月)
 MIN_EV_THRESHOLD = -0.60
 
-# Maximum bets to return per race (combo bets only; tanpuku added separately)
-MAX_BETS = 6  # D5 dynamic: 馬単0~3 + 馬連0~2 + ワイド1 = 最大6点/R
+# Maximum bets to return per layer
+MAX_BETS = 5  # D6: EV上位5点/layer
 
-# D5 dynamic: 馬単・馬連を軸に高配当を狙う
-# ワイドと複勝は払戻が少ないため最小限に抑える
-HONMEI_WIDE_PARTNERS = 1     # ◎-AI 2位のみ (ワイド1点: 保険)
+# D6 Dual Layer thresholds
 SHOUBU_MIN_SCORE = 68.0       # 勝負レース判定: ◎>=68 (27ファクター対応)
-UMAREN_MIN_SCORE = 68.0       # 馬連: 勝負レースなら常に採用
-UMATAN_MIN_SCORE = 68.0       # 馬単: 勝負レースなら常に採用
-UMATAN_MIN_GAP = 0.0          # 馬単: gap条件なし(勝負判定で絞り済み)
-HONMEI_UMATAN_PARTNERS = 3   # 馬単◎→AI 2~4位 (3点)
-HONMEI_UMAREN_PARTNERS = 2   # 馬連◎-AI 2~3位 (2点)
 
-# 単複リスクヘッジ (最小限)
-TANPUKU_TANSHO_MIN_ODDS = 6.0   # 単勝は6倍以上のみ
-TANPUKU_FUKUSHO_MIN_ODDS = 6.0  # 複勝も6倍以上のみ (低配当複勝を排除)
-TANPUKU_RATIO = (1, 1)           # 単勝:複勝 = 1:1
+# EV Core (Layer 1): ◎が2-4倍帯のレースで単勝/馬連/ワイド/3連複から選択
+EV_CORE_HONMEI_ODDS_MIN = 2.0   # ◎オッズ下限
+EV_CORE_HONMEI_ODDS_MAX = 4.0   # ◎オッズ上限
+EV_CORE_BET_TYPES = {"tansho", "umaren", "wide", "sanrenpuku"}  # 対象券種
+EV_CORE_MAX_BETS = 5             # EV上位5点
+
+# Value Shot (Layer 2): 全レースで高オッズ穴狙い (馬単含む全券種)
+VALUE_SHOT_BET_TYPES = {"tansho", "umaren", "umatan", "wide", "sanrenpuku", "sanrentan"}
+VALUE_SHOT_MIN_ODDS = 5.0        # 最低オッズ (穴狙いなので低オッズ除外)
+VALUE_SHOT_MAX_BETS = 5          # EV上位5点
+
+# Legacy constants for backward compat
+HONMEI_WIDE_PARTNERS = 1
+UMAREN_MIN_SCORE = 68.0
+UMATAN_MIN_SCORE = 68.0
+UMATAN_MIN_GAP = 0.0
+HONMEI_UMATAN_PARTNERS = 3
+HONMEI_UMAREN_PARTNERS = 2
+TANPUKU_TANSHO_MIN_ODDS = 6.0
+TANPUKU_FUKUSHO_MIN_ODDS = 6.0
+TANPUKU_RATIO = (1, 1)
 
 # ケリー基準 (improvement 1: 利益額6倍)
 KELLY_FRACTION = 0.5  # ハーフケリー
@@ -609,6 +616,168 @@ def optimize_bets(
         bet["rank"] = i + 1
 
     return selected
+
+
+def _ev_select(candidates: List[Dict], odds_data: Dict,
+               allowed_types: set, max_bets: int,
+               min_odds: float = 2.0,
+               require_honmei: bool = False,
+               honmei_hn: int = 0) -> List[Dict]:
+    """Pure EV-based selection: pick top N bets by EV from candidates.
+
+    Args:
+        candidates: Pre-computed candidates with hitProb set.
+        odds_data: Real odds data dict.
+        allowed_types: Set of allowed bet type strings.
+        max_bets: Maximum number of bets to select.
+        min_odds: Minimum odds threshold.
+        require_honmei: If True, only consider bets involving honmei_hn.
+        honmei_hn: Horse number of ◎ (used when require_honmei=True).
+
+    Returns:
+        List of selected bets sorted by EV descending.
+    """
+    scored = []
+    for c in candidates:
+        if c["type"] not in allowed_types:
+            continue
+        if require_honmei and honmei_hn not in c["horses"]:
+            continue
+
+        oi = find_odds_for_bet(c, odds_data)
+        if not oi:
+            continue
+        if oi["odds"] < min_odds:
+            continue
+
+        bet = dict(c)
+        bet["odds"] = oi["odds"]
+        bet["payout"] = oi["payout"]
+        bet["hasRealOdds"] = True
+        if "oddsMin" in oi:
+            bet["oddsMin"] = oi["oddsMin"]
+        if "oddsMax" in oi:
+            bet["oddsMax"] = oi["oddsMax"]
+
+        # EV = hitProb * odds - 1
+        # 推定オッズには縮小係数を適用 (実オッズは信頼、推定は保守的に)
+        odds_for_ev = oi["odds"]
+        if not odds_data or bet["type"] not in odds_data:
+            odds_for_ev *= ESTIMATED_ODDS_SHRINKAGE
+        bet["ev"] = bet["hitProb"] * odds_for_ev - 1.0
+        scored.append(bet)
+
+    # Sort by EV descending, pick top N
+    scored.sort(key=lambda x: -x["ev"])
+    selected = scored[:max_bets]
+
+    # Kelly bet sizing
+    for bet in selected:
+        bet["betSize"] = kelly_bet_size(bet["hitProb"], bet.get("odds", 1))
+
+    for i, bet in enumerate(selected):
+        bet["rank"] = i + 1
+
+    return selected
+
+
+def optimize_bets_dual(
+    predictions: List[Dict],
+    odds_data: Dict,
+    race_info: Dict,
+    entries: Optional[List[Dict]] = None,
+    mc_samples: int = MC_SAMPLES,
+) -> Dict[str, Any]:
+    """D6 Dual Layer optimizer.
+
+    Returns dict with:
+      "core_bets": Layer 1 EV Core bets (up to 5, only when ◎ is 2-4x)
+      "value_bets": Layer 2 Value Shot bets (up to 5, all races)
+      "longshot": Best longshot candidate
+      "pattern": Race pattern label
+      "layer1_active": Whether Layer 1 is active for this race
+    """
+    head_count = race_info.get("headCount", 16)
+    if head_count < 3:
+        return {"core_bets": [], "value_bets": [], "longshot": None,
+                "pattern": "", "layer1_active": False}
+
+    probs = scores_to_probabilities(predictions, head_count)
+    if len(probs) < 3:
+        return {"core_bets": [], "value_bets": [], "longshot": None,
+                "pattern": "", "layer1_active": False}
+
+    # AI ranking
+    ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
+    honmei_hn = ai_sorted[0]["horseNumber"]
+
+    # Generate candidates
+    candidates = generate_candidates(probs, top_n=min(7, len(probs)), entries=entries)
+
+    # Monte Carlo
+    rng = random.Random(42)
+    finishes = monte_carlo_finish(probs, mc_samples, rng=rng)
+    candidates = estimate_hit_probabilities(finishes, candidates)
+    for c in candidates:
+        c["hitProb"] *= HITPROB_DEFLATION.get(c["type"], 1.0)
+
+    # Get ◎ odds
+    honmei_odds = 0.0
+    if entries:
+        for e in entries:
+            if e.get("horseNumber") == honmei_hn and e.get("odds"):
+                honmei_odds = e["odds"]
+                break
+    if not honmei_odds and odds_data and "tansho" in odds_data:
+        for entry in odds_data["tansho"]:
+            if entry.get("horses") == [honmei_hn]:
+                honmei_odds = entry["odds"]
+                break
+
+    # ── Layer 1: EV Core (◎ 2-4倍帯のみ) ──
+    layer1_active = EV_CORE_HONMEI_ODDS_MIN <= honmei_odds < EV_CORE_HONMEI_ODDS_MAX
+    core_bets = []
+    if layer1_active:
+        core_bets = _ev_select(
+            candidates, odds_data,
+            allowed_types=EV_CORE_BET_TYPES,
+            max_bets=EV_CORE_MAX_BETS,
+            min_odds=2.0,
+            require_honmei=True,
+            honmei_hn=honmei_hn,
+        )
+
+    # ── Layer 2: Value Shot (全レース, 高オッズ) ──
+    # Exclude bets already in Layer 1
+    core_keys = {(b["type"], tuple(b["horses"])) for b in core_bets}
+    value_candidates = [c for c in candidates
+                        if (c["type"], tuple(c["horses"])) not in core_keys]
+    value_bets = _ev_select(
+        value_candidates, odds_data,
+        allowed_types=VALUE_SHOT_BET_TYPES,
+        max_bets=VALUE_SHOT_MAX_BETS,
+        min_odds=VALUE_SHOT_MIN_ODDS,
+    )
+
+    # ── Longshot (投資対象化) ──
+    all_selected = core_bets + value_bets
+    longshot = pick_longshot(candidates, all_selected, probs)
+
+    # Pattern
+    pattern = detect_race_pattern(probs)
+
+    # Clean up frame maps
+    for c in candidates:
+        c.pop("_frame_map", None)
+
+    return {
+        "core_bets": core_bets,
+        "value_bets": value_bets,
+        "longshot": longshot,
+        "pattern": pattern,
+        "layer1_active": layer1_active,
+        "honmei_odds": honmei_odds,
+    }
 
 
 def _diversify(
