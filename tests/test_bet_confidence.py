@@ -1,8 +1,9 @@
-"""TDD tests for evaluate_bet_confidence() — D5 ◎軸厚張り strategy.
+"""TDD tests for evaluate_bet_confidence() — D7 EV Focus strategy.
 
-D5 simplifies confidence to score-based only:
-  "A" (勝負): ◎score >= 75 → full ◎軸展開 (up to 14 points)
-  "C" (SKIP): ◎score < 75 → skip this race
+D7 three-level confidence:
+  "A" (勝負): ◎score >= 68 AND ◎odds 2-4倍 → BUY ◎単勝
+  "B" (推奨): ◎score >= 68 だがodds条件外 → EV+参考表記
+  "C" (SKIP): ◎score < 68 → 見送り
 """
 from __future__ import annotations
 
@@ -35,136 +36,150 @@ def _make_race_info(head_count: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 1. A Rank (勝負) — ◎score >= 75
+# 1. A Rank (勝負) — ◎score >= 68 AND odds 2-4倍
 # ---------------------------------------------------------------------------
 
 class TestARank:
-    """A = 勝負: ◎score >= SHOUBU_MIN_SCORE (74)."""
+    """A = 勝負: ◎score >= 68 AND ◎odds in [2.0, 4.0)."""
 
-    def test_high_score_returns_a(self):
-        """◎score=90 → 'A'."""
+    def test_high_score_and_good_odds_returns_a(self):
         predictions = _make_predictions([90, 60, 40])
-        result = evaluate_bet_confidence(predictions, _make_race_info(16))
-        assert result == "A"
-
-    def test_score_exactly_at_threshold_returns_a(self):
-        """◎score=68.0 (exact threshold) → 'A'."""
-        predictions = _make_predictions([68.0, 60, 40])
-        result = evaluate_bet_confidence(predictions, _make_race_info(12))
-        assert result == "A"
-
-    def test_score_just_above_threshold_returns_a(self):
-        """◎score=74.1 → 'A'."""
-        predictions = _make_predictions([74.1, 50, 30])
-        result = evaluate_bet_confidence(predictions, _make_race_info(18))
-        assert result == "A"
-
-    def test_large_field_high_score_still_a(self):
-        """Large field (18 heads) but ◎score=80 → 'A'."""
-        scores = [80] + [40] * 17
-        predictions = _make_predictions(scores)
-        result = evaluate_bet_confidence(predictions, _make_race_info(18))
-        assert result == "A"
-
-    def test_entries_do_not_affect_a_rank(self):
-        """Entries/odds don't matter for D5 — only ◎score counts."""
-        predictions = _make_predictions([85, 50, 30])
-        entries = _make_entries({1: 5.0, 2: 8.0})
+        entries = _make_entries({1: 3.0, 2: 8.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "A"
 
-    def test_single_horse_high_score_returns_a(self):
-        """Single horse with score >= 75 → 'A'."""
-        predictions = [{"horseNumber": 1, "score": 80}]
-        result = evaluate_bet_confidence(predictions, _make_race_info(5))
+    def test_score_at_threshold_and_odds_in_range(self):
+        """◎score=68.0, odds=2.5 → 'A'."""
+        predictions = _make_predictions([68.0, 60, 40])
+        entries = _make_entries({1: 2.5, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(12), entries)
+        assert result == "A"
+
+    def test_odds_exactly_2(self):
+        """◎odds=2.0 (lower bound) → 'A'."""
+        predictions = _make_predictions([75, 50, 30])
+        entries = _make_entries({1: 2.0, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "A"
+
+    def test_odds_just_below_4(self):
+        """◎odds=3.9 → 'A'."""
+        predictions = _make_predictions([70, 50, 30])
+        entries = _make_entries({1: 3.9, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "A"
 
 
 # ---------------------------------------------------------------------------
-# 2. C Rank (SKIP) — ◎score < 75
+# 2. B Rank (推奨) — ◎score >= 68 but odds outside 2-4倍
+# ---------------------------------------------------------------------------
+
+class TestBRank:
+    """B = 推奨: ◎score >= 68 but odds NOT in [2.0, 4.0)."""
+
+    def test_high_score_low_odds(self):
+        """◎score=80, odds=1.5 → 'B' (人気すぎ)."""
+        predictions = _make_predictions([80, 50, 30])
+        entries = _make_entries({1: 1.5, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "B"
+
+    def test_high_score_high_odds(self):
+        """◎score=75, odds=5.0 → 'B' (オッズ高すぎ)."""
+        predictions = _make_predictions([75, 50, 30])
+        entries = _make_entries({1: 5.0, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "B"
+
+    def test_odds_exactly_4(self):
+        """◎odds=4.0 (upper bound exclusive) → 'B'."""
+        predictions = _make_predictions([70, 50, 30])
+        entries = _make_entries({1: 4.0, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "B"
+
+    def test_high_score_no_entries(self):
+        """◎score=80 but no entries → 'B' (can't determine odds)."""
+        predictions = _make_predictions([80, 50, 30])
+        result = evaluate_bet_confidence(predictions, _make_race_info(16))
+        assert result == "B"
+
+    def test_high_score_no_odds(self):
+        """◎score=70, entries without odds → 'B'."""
+        predictions = _make_predictions([70, 50, 30])
+        entries = [{"horseNumber": 1}, {"horseNumber": 2}]
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "B"
+
+
+# ---------------------------------------------------------------------------
+# 3. C Rank (SKIP) — ◎score < 68
 # ---------------------------------------------------------------------------
 
 class TestCRank:
-    """C = SKIP: ◎score < SHOUBU_MIN_SCORE (74)."""
+    """C = SKIP: ◎score < 68."""
 
-    def test_low_score_returns_c(self):
-        """◎score=60 → 'C'."""
+    def test_low_score(self):
         predictions = _make_predictions([60, 55, 40])
-        result = evaluate_bet_confidence(predictions, _make_race_info(14))
+        entries = _make_entries({1: 3.0, 2: 5.0, 3: 10.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(14), entries)
         assert result == "C"
 
-    def test_score_just_below_threshold_returns_c(self):
+    def test_score_just_below_threshold(self):
         """◎score=67.9 → 'C'."""
         predictions = _make_predictions([67.9, 50, 30])
-        result = evaluate_bet_confidence(predictions, _make_race_info(12))
+        entries = _make_entries({1: 3.0, 2: 8.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(12), entries)
         assert result == "C"
 
-    def test_score_67_returns_c(self):
-        """◎score=67 → 'C'."""
-        predictions = _make_predictions([67, 60, 40])
-        result = evaluate_bet_confidence(predictions, _make_race_info(10))
-        assert result == "C"
-
-    def test_small_field_low_score_still_c(self):
-        """Small field (6 heads) but ◎score=50 → 'C'."""
-        scores = [50, 45, 40, 35, 30, 25]
-        predictions = _make_predictions(scores)
-        result = evaluate_bet_confidence(predictions, _make_race_info(6))
-        assert result == "C"
-
-    def test_favourite_odds_low_but_score_below_threshold(self):
-        """Even if odds suggest favourite, ◎score < 75 → 'C'."""
+    def test_low_score_good_odds_still_c(self):
+        """◎score=60, odds=3.0 → 'C' (score不足)."""
         predictions = _make_predictions([60, 40, 20])
-        entries = _make_entries({1: 1.5, 2: 8.0})
+        entries = _make_entries({1: 3.0, 2: 8.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(8), entries)
         assert result == "C"
 
 
 # ---------------------------------------------------------------------------
-# 3. Edge Cases
+# 4. Edge Cases
 # ---------------------------------------------------------------------------
 
 class TestEdgeCases:
     """Edge cases must not crash and must return valid grade."""
 
     def test_empty_predictions_returns_c(self):
-        """No predictions → 'C' (early return guard)."""
         result = evaluate_bet_confidence([], {"headCount": 16}, [])
         assert result == "C"
 
     def test_all_scores_zero_returns_c(self):
-        """All scores 0 → ◎score=0 < 75 → 'C'."""
         predictions = [{"horseNumber": i + 1, "score": 0} for i in range(8)]
         result = evaluate_bet_confidence(predictions, _make_race_info(16))
         assert result == "C"
 
     def test_none_entries_returns_valid_grade(self):
-        """entries=None does not crash."""
         predictions = _make_predictions([80, 50, 30])
         result = evaluate_bet_confidence(predictions, _make_race_info(12), None)
-        assert result in ("A", "C")
+        assert result in ("A", "B", "C")
 
     def test_missing_head_count_returns_valid_grade(self):
-        """race_info with no 'headCount' → function uses default, no crash."""
         predictions = _make_predictions([80, 50, 30])
         result = evaluate_bet_confidence(predictions, {}, None)
-        assert result in ("A", "C")
+        assert result in ("A", "B", "C")
 
-    def test_result_is_always_a_or_c(self):
-        """D5 invariant: output is always exactly 'A' or 'C'."""
+    def test_result_is_always_a_b_or_c(self):
+        """D7 invariant: output is always 'A', 'B', or 'C'."""
         test_cases = [
-            (_make_predictions([90, 60, 40]), _make_race_info(8)),
-            (_make_predictions([50, 49, 48]), _make_race_info(18)),
-            (_make_predictions([100, 1, 1]), _make_race_info(12)),
-            (_make_predictions([74, 73, 72]), _make_race_info(16)),
-            ([], _make_race_info(16)),
+            (_make_predictions([90, 60, 40]), _make_race_info(8), _make_entries({1: 3.0})),
+            (_make_predictions([50, 49, 48]), _make_race_info(18), None),
+            (_make_predictions([70, 50, 30]), _make_race_info(12), _make_entries({1: 1.2})),
+            (_make_predictions([68, 60, 40]), _make_race_info(16), _make_entries({1: 10.0})),
+            ([], _make_race_info(16), None),
         ]
-        for predictions, race_info in test_cases:
-            result = evaluate_bet_confidence(predictions, race_info)
-            assert result in ("A", "C"), (
+        for predictions, race_info, entries in test_cases:
+            result = evaluate_bet_confidence(predictions, race_info, entries)
+            assert result in ("A", "B", "C"), (
                 f"Unexpected grade '{result}' for predictions={predictions}"
             )
 
-    def test_shoubu_min_score_constant_is_74(self):
-        """SHOUBU_MIN_SCORE constant is 74."""
+    def test_shoubu_min_score_constant_is_68(self):
         assert SHOUBU_MIN_SCORE == 68.0

@@ -1016,21 +1016,38 @@ def detect_race_pattern(probs: Dict[int, float]) -> str:
 
 
 def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = None) -> str:
-    """D5 dynamic: 勝負レース判定.
+    """D7: 3段階レース判定.
 
     Returns:
-      "A" (勝負): ◎score >= SHOUBU_MIN_SCORE — buy with dynamic bet selection
-      "C" (SKIP): ◎score < SHOUBU_MIN_SCORE — skip this race
+      "A" (勝負): ◎単勝BUY対象 — score>=68 AND odds 2-4倍
+      "B" (推奨): EV+の買い目あり — score>=68 だがBUY条件外、またはEV+候補あり
+      "C" (SKIP): 該当なし
 
-    Validated on 564R (5-8月): ◎>=74 → 191R selected, ROI 224%
+    "B" is determined by score threshold only at this stage;
+    actual EV+ presence is checked by optimize_bets_dual separately.
     """
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
     if not ai_sorted:
         return "C"
 
     honmei_score = ai_sorted[0].get("score", 0)
+    honmei_hn = ai_sorted[0].get("horseNumber", 0)
 
-    if honmei_score >= SHOUBU_MIN_SCORE:
+    # Get ◎ odds
+    honmei_odds = 0.0
+    if entries:
+        for e in entries:
+            if e.get("horseNumber") == honmei_hn and e.get("odds"):
+                honmei_odds = e["odds"]
+                break
+
+    # A: BUY対象 (◎単勝集中投資)
+    if (honmei_score >= SHOUBU_MIN_SCORE
+            and BUY_HONMEI_ODDS_MIN <= honmei_odds < BUY_HONMEI_ODDS_MAX):
         return "A"
+
+    # B: 推奨 (score高いがBUY条件外 → EV+候補の可能性あり)
+    if honmei_score >= SHOUBU_MIN_SCORE:
+        return "B"
 
     return "C"
