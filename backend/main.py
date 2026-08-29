@@ -590,6 +590,9 @@ def get_optimized_bets(race_id: str):
             raise HTTPException(status_code=404, detail="Race not found.")
         return {
             "bets": result["bets"],
+            "coreBets": result.get("coreBets", []),
+            "valueBets": result.get("valueBets", []),
+            "layer1Active": result.get("layer1Active", False),
             "longshot": result["longshot"],
             "pattern": result["pattern"],
             "betConfidence": result.get("betConfidence", "B"),

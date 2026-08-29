@@ -671,8 +671,14 @@ function renderBets(){
       coreSection.style.display='none';
     }
   }
-  // Value bets = use remaining bets (or valueBets if available)
-  const valueBets=_valueBets&&_valueBets.length>0?_valueBets:bets;
+  // Value bets: use _valueBets if available, otherwise dB minus coreBets
+  let valueBets;
+  if(_valueBets&&_valueBets.length>0){valueBets=_valueBets;}
+  else if(_coreBets&&_coreBets.length>0){
+    // Legacy fallback: filter core bets out of combined list
+    const coreKeys=new Set(_coreBets.map(b=>b.type+'-'+b.horses.join(',')));
+    valueBets=bets.filter(b=>!coreKeys.has(b.type+'-'+b.horses.join(',')));
+  } else {valueBets=bets;}
   if(!valueBets||!valueBets.length){document.getElementById('bets').innerHTML='<div class="px-4 py-6 text-center text-gray-400 text-sm">オッズ確定後に買い目が更新されます</div>';document.getElementById('bet-summary').style.display='none';return;}
   document.getElementById('bet-summary').style.display='none';
   let h=_renderBetList(valueBets);
