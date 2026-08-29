@@ -571,8 +571,8 @@ function renderDetail(info,pat){
     <div id="core-bets-section" class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden" style="display:none">
       <div class="bg-gradient-to-r from-red-700 to-red-900 px-4 py-2.5 flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <h2 class="text-white font-black text-sm tracking-wide">EV CORE</h2>
-          <span class="bg-white/20 text-white text-[9px] font-bold px-2 py-0.5 rounded">堅実軸</span>
+          <h2 class="text-white font-black text-sm tracking-wide">BUY</h2>
+          <span class="bg-white/20 text-white text-[9px] font-bold px-2 py-0.5 rounded">◎単勝 集中投資</span>
         </div>
         <span id="detail-confidence"></span>
       </div>
@@ -581,14 +581,14 @@ function renderDetail(info,pat){
     <div class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden">
       <div class="bg-navy-900 px-4 py-2.5 flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <h2 class="text-gold-400 font-black text-sm tracking-wide">VALUE SHOT</h2>
-          <span class="bg-white/10 text-gold-400 text-[9px] font-bold px-2 py-0.5 rounded">穴狙い</span>
+          <h2 class="text-gold-400 font-black text-sm tracking-wide">EV+ PICKS</h2>
+          <span class="bg-white/10 text-gold-400 text-[9px] font-bold px-2 py-0.5 rounded">参考</span>
         </div>
         <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
       </div>
       <div id="bet-summary" class="px-4 py-1.5 bg-navy-800 text-[11px] flex items-center gap-3"></div>
       <div id="bets" class="divide-y divide-gray-100"></div>
-      <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ AI予想は参考情報です。購入は自己責任でお願いします。</div>
+      <div class="px-4 py-2 bg-gray-50 text-[10px] text-gray-400 border-t border-gray-100">※ EV+の買い目を参考表記。投資判断は自己責任でお願いします。</div>
     </div>
     <div id="ai-analysis" class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden mt-3" style="display:none">
       <div class="bg-navy-900 px-4 py-2 flex items-center gap-2">
