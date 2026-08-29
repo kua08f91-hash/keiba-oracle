@@ -634,7 +634,9 @@ def _ev_select(candidates: List[Dict], odds_data: Dict,
                allowed_types: set, max_bets: int,
                min_odds: float = 2.0,
                require_honmei: bool = False,
-               honmei_hn: int = 0) -> List[Dict]:
+               honmei_hn: int = 0,
+               require_real_odds: bool = False,
+               real_odds_types: Optional[set] = None) -> List[Dict]:
     """Pure EV-based selection: pick top N bets by EV from candidates.
 
     Args:
@@ -645,6 +647,8 @@ def _ev_select(candidates: List[Dict], odds_data: Dict,
         min_odds: Minimum odds threshold.
         require_honmei: If True, only consider bets involving honmei_hn.
         honmei_hn: Horse number of ◎ (used when require_honmei=True).
+        require_real_odds: If True, skip bets without real odds data.
+        real_odds_types: Set of bet types that have real (not estimated) odds.
 
     Returns:
         List of selected bets sorted by EV descending.
@@ -667,12 +671,17 @@ def _ev_select(candidates: List[Dict], odds_data: Dict,
         # オッズ上限キャップ (99999倍等の異常値を排除)
         cap = MAX_ODDS_CAP.get(c["type"], 500.0)
         if raw_odds > cap:
-            continue  # キャップ超えは候補から除外
+            continue
+
+        # 実オッズ判定: real_odds_typesに含まれる券種のみ実オッズ
+        is_real = real_odds_types is not None and c["type"] in real_odds_types
+        if require_real_odds and not is_real:
+            continue
 
         bet = dict(c)
         bet["odds"] = raw_odds
         bet["payout"] = oi["payout"]
-        bet["hasRealOdds"] = True
+        bet["hasRealOdds"] = is_real
         if "oddsMin" in oi:
             bet["oddsMin"] = oi["oddsMin"]
         if "oddsMax" in oi:
@@ -749,8 +758,25 @@ def optimize_bets_dual(
                 honmei_odds = entry["odds"]
                 break
 
-    # ── Layer 1: EV Core (◎ 2-4倍帯のみ) ──
-    layer1_active = EV_CORE_HONMEI_ODDS_MIN <= honmei_odds < EV_CORE_HONMEI_ODDS_MAX
+    # ── Layer 1: EV Core (◎ 2-4倍帯 AND 勝負レース判定A) ──
+    honmei_score = ai_sorted[0].get("score", 0)
+    odds_in_range = EV_CORE_HONMEI_ODDS_MIN <= honmei_odds < EV_CORE_HONMEI_ODDS_MAX
+    score_confident = honmei_score >= SHOUBU_MIN_SCORE
+    layer1_active = odds_in_range and score_confident
+
+    # Detect which bet types have real (non-estimated) odds
+    # estimate_from_entries always provides tansho/fukusho from entry odds;
+    # combination types (umaren/wide/sanrenpuku/sanrentan/umatan) are real
+    # only when fetched from netkeiba API (fetch_live_combination_odds).
+    # Heuristic: if odds_data has >20 entries for a type, it's from the API.
+    real_odds_types = {"tansho"}  # Single-win odds are always real from entries
+    if odds_data:
+        for bt in ("umaren", "umatan", "wide", "sanrenpuku", "sanrentan"):
+            entries_for_type = odds_data.get(bt, [])
+            # API returns full combination matrix; estimated has only top pairs
+            if len(entries_for_type) > 20:
+                real_odds_types.add(bt)
+
     core_bets = []
     if layer1_active:
         core_bets = _ev_select(
@@ -760,10 +786,11 @@ def optimize_bets_dual(
             min_odds=2.0,
             require_honmei=True,
             honmei_hn=honmei_hn,
+            real_odds_types=real_odds_types,
         )
 
     # ── Layer 2: Value Shot (全レース, 高オッズ) ──
-    # Exclude bets already in Layer 1
+    # MAX_ODDS_CAPで異常値は排除済み。推定オッズも許容（穴狙いなので）
     core_keys = {(b["type"], tuple(b["horses"])) for b in core_bets}
     value_candidates = [c for c in candidates
                         if (c["type"], tuple(c["horses"])) not in core_keys]
@@ -772,6 +799,7 @@ def optimize_bets_dual(
         allowed_types=VALUE_SHOT_BET_TYPES,
         max_bets=VALUE_SHOT_MAX_BETS,
         min_odds=VALUE_SHOT_MIN_ODDS,
+        real_odds_types=real_odds_types,
     )
 
     # ── Longshot (投資対象化) ──
