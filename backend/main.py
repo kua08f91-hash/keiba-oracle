@@ -396,6 +396,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
     longshot = None
     pattern = ""
     layer1_active = False
+    layer2_active = False
     already_frozen = _get_cached_predictions(race_id)
     if already_frozen and already_frozen.get("frozen"):
         # Race was frozen by worker but _compute_live reached here
@@ -430,6 +431,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
         core_bets = dual["core_bets"]
         value_bets = dual["value_bets"]
         layer1_active = dual["layer1_active"]
+        layer2_active = dual.get("layer2_active", False)
 
         if should_freeze:
             _auto_freeze_and_cache(race_id, predictions, bets, longshot, pattern)
@@ -479,7 +481,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
         "longshot": longshot,
         "pattern": pattern,
         "betConfidence": bet_conf,
-        "layer1Active": layer1_active if include_bets or should_freeze else False,
+        "layer1Active": (layer1_active or layer2_active) if include_bets or should_freeze else False,
         "analysis": analysis,
         "frozen": should_freeze if (include_bets or should_freeze) else False,
         "updatedAt": None,

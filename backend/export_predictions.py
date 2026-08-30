@@ -168,7 +168,7 @@ def main():
                     pattern = dual["pattern"]
                     core_bets = dual["core_bets"]
                     value_bets = dual["value_bets"]
-                    layer1_active = dual["layer1_active"]
+                    layer1_active = dual["layer1_active"] or dual.get("layer2_active", False)
 
                 # Generate AI analysis (batch mode — only if LLM is available)
                 analysis = ""

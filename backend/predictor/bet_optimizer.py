@@ -49,9 +49,13 @@ MAX_BETS = 5
 # D7 thresholds
 SHOUBU_MIN_SCORE = 68.0       # 勝負レース判定: ◎>=68
 
-# D7 BUY layer: ◎単勝 — score>=68 AND odds 2-4倍
+# D7 BUY layer (A判定): ◎単勝 — score>=68 AND odds 2-4倍
 BUY_HONMEI_ODDS_MIN = 2.0
 BUY_HONMEI_ODDS_MAX = 4.0
+
+# D7 REC layer (B判定): ◯単勝 — ◯odds>=8 AND ◯score>=60
+REC_NIBAN_MIN_ODDS = 8.0      # ◯オッズ下限
+REC_NIBAN_MIN_SCORE = 60.0    # ◯スコア下限
 
 # D7 INFO layer: EV>0の全券種を参考表記
 INFO_BET_TYPES = {"tansho", "umaren", "umatan", "wide", "sanrenpuku", "sanrentan"}
@@ -780,24 +784,50 @@ def optimize_bets_dual(
     layer1_active = odds_in_range and score_confident
 
     core_bets = []
-    if layer1_active:
-        # ◎単勝のみ — ケリー基準でサイジング
-        tansho_cand = next(
+
+    def _make_tansho_bet(horse_hn, rank):
+        """Create a tansho bet for the given horse if odds are available."""
+        cand = next(
             (c for c in candidates
-             if c["type"] == "tansho" and c["horses"] == [honmei_hn]),
+             if c["type"] == "tansho" and c["horses"] == [horse_hn]),
             None,
         )
-        if tansho_cand:
-            oi = find_odds_for_bet(tansho_cand, odds_data)
-            if oi and oi["odds"] >= 2.0:
-                bet = dict(tansho_cand)
-                bet["odds"] = oi["odds"]
-                bet["payout"] = oi["payout"]
-                bet["hasRealOdds"] = True
-                bet["ev"] = bet["hitProb"] * oi["odds"] - 1.0
-                bet["betSize"] = kelly_bet_size(bet["hitProb"], oi["odds"])
-                bet["rank"] = 1
-                core_bets = [bet]
+        if not cand:
+            return None
+        oi = find_odds_for_bet(cand, odds_data)
+        if not oi or oi["odds"] < 2.0:
+            return None
+        bet = dict(cand)
+        bet["odds"] = oi["odds"]
+        bet["payout"] = oi["payout"]
+        bet["hasRealOdds"] = True
+        bet["ev"] = bet["hitProb"] * oi["odds"] - 1.0
+        bet["betSize"] = kelly_bet_size(bet["hitProb"], oi["odds"])
+        bet["rank"] = rank
+        return bet
+
+    # A判定: ◎単勝
+    if layer1_active:
+        bet = _make_tansho_bet(honmei_hn, 1)
+        if bet:
+            core_bets.append(bet)
+
+    # B判定: ◯単勝 (◯odds>=8 AND ◯score>=60, A判定と重複しないレースのみ)
+    niban_hn = ai_sorted[1]["horseNumber"] if len(ai_sorted) >= 2 else 0
+    niban_score = ai_sorted[1].get("score", 0) if len(ai_sorted) >= 2 else 0
+    niban_odds = 0.0
+    if entries and niban_hn:
+        for e in entries:
+            if e.get("horseNumber") == niban_hn and e.get("odds"):
+                niban_odds = e["odds"]
+                break
+    layer2_active = (niban_odds >= REC_NIBAN_MIN_ODDS
+                     and niban_score >= REC_NIBAN_MIN_SCORE
+                     and not layer1_active)
+    if layer2_active:
+        bet = _make_tansho_bet(niban_hn, 1)
+        if bet:
+            core_bets.append(bet)
 
     # ── INFO layer: EV>0 の買い目を参考表記 (全レース) ──
     core_keys = {(b["type"], tuple(b["horses"])) for b in core_bets}
@@ -830,6 +860,7 @@ def optimize_bets_dual(
         "longshot": longshot,
         "pattern": pattern,
         "layer1_active": layer1_active,
+        "layer2_active": layer2_active,
         "honmei_odds": honmei_odds,
     }
 
@@ -1046,8 +1077,17 @@ def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = 
             and BUY_HONMEI_ODDS_MIN <= honmei_odds < BUY_HONMEI_ODDS_MAX):
         return "A"
 
-    # B: 推奨 (score高いがBUY条件外 → EV+候補の可能性あり)
-    if honmei_score >= SHOUBU_MIN_SCORE:
-        return "B"
+    # B: 推奨 (◯単勝穴狙い: ◯odds>=8 AND ◯score>=60)
+    if len(ai_sorted) >= 2:
+        niban_score = ai_sorted[1].get("score", 0)
+        niban_hn = ai_sorted[1].get("horseNumber", 0)
+        niban_odds = 0.0
+        if entries:
+            for e in entries:
+                if e.get("horseNumber") == niban_hn and e.get("odds"):
+                    niban_odds = e["odds"]
+                    break
+        if niban_odds >= REC_NIBAN_MIN_ODDS and niban_score >= REC_NIBAN_MIN_SCORE:
+            return "B"
 
     return "C"

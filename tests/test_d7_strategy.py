@@ -146,8 +146,10 @@ def _run_dual(
 
 @pytest.fixture
 def confident_predictions():
-    """◎ score=75 — above SHOUBU_MIN_SCORE=68."""
-    return _make_predictions([75.0, 65.0, 55.0, 48.0, 40.0, 33.0, 25.0, 18.0])
+    """◎ score=75 — above SHOUBU_MIN_SCORE=68.
+    ◯ score=55 — below REC_NIBAN_MIN_SCORE=60 to avoid triggering B.
+    """
+    return _make_predictions([75.0, 55.0, 50.0, 45.0, 40.0, 33.0, 25.0, 18.0])
 
 
 @pytest.fixture
@@ -837,8 +839,9 @@ class TestLayer1ActiveFlag:
         )
 
     def test_odds_exactly_4_gives_false(self):
-        """Boundary: 4.0 is exclusive upper bound → layer1_active must be False."""
-        preds = _make_predictions([75.0, 65.0, 55.0, 48.0, 40.0, 33.0, 25.0, 18.0])
+        """Boundary: 4.0 is exclusive upper bound → layer1_active must be False.
+        Use low ◯ score to avoid B-layer activation."""
+        preds = _make_predictions([75.0, 55.0, 50.0, 45.0, 40.0, 33.0, 25.0, 18.0])
         odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=4.0)
         entries = _make_entries_with_odds(8, 4.0)
         result = _run_dual(preds, odds, honmei_odds=4.0, entries=entries)

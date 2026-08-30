@@ -75,41 +75,42 @@ class TestARank:
 # ---------------------------------------------------------------------------
 
 class TestBRank:
-    """B = 推奨: ◎score >= 68 but odds NOT in [2.0, 4.0)."""
+    """B = 推奨: ◯odds>=8 AND ◯score>=60 (A判定でないレース)."""
 
-    def test_high_score_low_odds(self):
-        """◎score=80, odds=1.5 → 'B' (人気すぎ)."""
-        predictions = _make_predictions([80, 50, 30])
-        entries = _make_entries({1: 1.5, 2: 8.0, 3: 15.0})
+    def test_niban_high_odds_high_score(self):
+        """◯odds=10, ◯score=62 → 'B'."""
+        predictions = _make_predictions([65, 62, 40])
+        entries = _make_entries({1: 5.0, 2: 10.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "B"
 
-    def test_high_score_high_odds(self):
-        """◎score=75, odds=5.0 → 'B' (オッズ高すぎ)."""
-        predictions = _make_predictions([75, 50, 30])
+    def test_niban_at_threshold(self):
+        """◯odds=8.0, ◯score=60.0 (境界値) → 'B'."""
+        predictions = _make_predictions([65, 60, 40])
         entries = _make_entries({1: 5.0, 2: 8.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "B"
 
-    def test_odds_exactly_4(self):
-        """◎odds=4.0 (upper bound exclusive) → 'B'."""
-        predictions = _make_predictions([70, 50, 30])
-        entries = _make_entries({1: 4.0, 2: 8.0, 3: 15.0})
+    def test_a_race_not_b(self):
+        """A判定条件を満たす場合はBにならない."""
+        predictions = _make_predictions([75, 62, 40])
+        entries = _make_entries({1: 3.0, 2: 10.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
-        assert result == "B"
+        assert result == "A"
 
-    def test_high_score_no_entries(self):
-        """◎score=80 but no entries → 'B' (can't determine odds)."""
-        predictions = _make_predictions([80, 50, 30])
-        result = evaluate_bet_confidence(predictions, _make_race_info(16))
-        assert result == "B"
-
-    def test_high_score_no_odds(self):
-        """◎score=70, entries without odds → 'B'."""
-        predictions = _make_predictions([70, 50, 30])
-        entries = [{"horseNumber": 1}, {"horseNumber": 2}]
+    def test_niban_low_odds_not_b(self):
+        """◯odds=5.0 (8倍未満) → 'C'."""
+        predictions = _make_predictions([65, 62, 40])
+        entries = _make_entries({1: 5.0, 2: 5.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
-        assert result == "B"
+        assert result == "C"
+
+    def test_niban_low_score_not_b(self):
+        """◯score=58 (60未満) → 'C'."""
+        predictions = _make_predictions([65, 58, 40])
+        entries = _make_entries({1: 5.0, 2: 10.0, 3: 15.0})
+        result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
+        assert result == "C"
 
 
 # ---------------------------------------------------------------------------

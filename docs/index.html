@@ -569,10 +569,10 @@ function renderDetail(info,pat){
       <span class="text-gray-300 ml-auto text-[10px]">Score列クリックで詳細</span>
     </div>
     <div id="core-bets-section" class="bg-white rounded-xl shadow border border-gray-200 overflow-hidden" style="display:none">
-      <div class="bg-gradient-to-r from-red-700 to-red-900 px-4 py-2.5 flex items-center justify-between">
+      <div id="core-bets-header" class="bg-gradient-to-r from-red-700 to-red-900 px-4 py-2.5 flex items-center justify-between">
         <div class="flex items-center gap-2">
           <h2 class="text-white font-black text-sm tracking-wide">BUY</h2>
-          <span class="bg-white/20 text-white text-[9px] font-bold px-2 py-0.5 rounded">◎単勝 集中投資</span>
+          <span id="core-bets-label" class="bg-white/20 text-white text-[9px] font-bold px-2 py-0.5 rounded">◎単勝 集中投資</span>
         </div>
         <span id="detail-confidence"></span>
       </div>
@@ -662,9 +662,16 @@ function renderBets(){
   const bets=dB;
   // Confidence label
   const confEl=document.getElementById('detail-confidence');
-  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':'';}
+  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':_betConfidence==='B'?'<span class="bg-emerald-400 text-white text-[9px] font-black px-2 py-0.5 rounded">推奨</span>':'';}
+  // BUYヘッダーのラベルをA/Bで切替
+  const coreHeader=document.getElementById('core-bets-header');
+  const coreLabel=document.getElementById('core-bets-label');
+  if(coreHeader&&coreLabel){
+    if(_betConfidence==='A'){coreHeader.className='bg-gradient-to-r from-red-700 to-red-900 px-4 py-2.5 flex items-center justify-between';coreLabel.textContent='◎単勝 集中投資';}
+    else if(_betConfidence==='B'){coreHeader.className='bg-gradient-to-r from-emerald-600 to-emerald-800 px-4 py-2.5 flex items-center justify-between';coreLabel.textContent='◯単勝 穴狙い';}
+  }
   const infoConfEl=document.getElementById('detail-info-confidence');
-  if(infoConfEl){infoConfEl.innerHTML=_betConfidence==='B'?'<span class="bg-emerald-400 text-white text-[9px] font-black px-2 py-0.5 rounded">推奨</span>':'';}
+  if(infoConfEl){infoConfEl.innerHTML='';}
   // Core bets section (Layer 1)
   const coreSection=document.getElementById('core-bets-section');
   const coreEl=document.getElementById('core-bets');
