@@ -584,7 +584,10 @@ function renderDetail(info,pat){
           <h2 class="text-gold-400 font-black text-sm tracking-wide">EV+ PICKS</h2>
           <span class="bg-white/10 text-gold-400 text-[9px] font-bold px-2 py-0.5 rounded">参考</span>
         </div>
-        <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+        <div class="flex items-center gap-1">
+          <span id="detail-info-confidence"></span>
+          <span id="detail-pattern" class="${pat?(pc[pat]||'bg-gray-500')+' text-white text-[9px] font-black px-2 py-0.5 rounded':''}"></span>
+        </div>
       </div>
       <div id="bet-summary" class="px-4 py-1.5 bg-navy-800 text-[11px] flex items-center gap-3"></div>
       <div id="bets" class="divide-y divide-gray-100"></div>
@@ -659,7 +662,9 @@ function renderBets(){
   const bets=dB;
   // Confidence label
   const confEl=document.getElementById('detail-confidence');
-  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':_betConfidence==='B'?'<span class="bg-emerald-400 text-white text-[9px] font-black px-2 py-0.5 rounded">推奨</span>':'';}
+  if(confEl){confEl.innerHTML=_betConfidence==='A'?'<span class="bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded animate-pulse">勝負</span>':'';}
+  const infoConfEl=document.getElementById('detail-info-confidence');
+  if(infoConfEl){infoConfEl.innerHTML=_betConfidence==='B'?'<span class="bg-emerald-400 text-white text-[9px] font-black px-2 py-0.5 rounded">推奨</span>':'';}
   // Core bets section (Layer 1)
   const coreSection=document.getElementById('core-bets-section');
   const coreEl=document.getElementById('core-bets');

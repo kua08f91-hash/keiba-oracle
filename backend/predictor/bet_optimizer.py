@@ -74,7 +74,7 @@ MAX_ODDS_CAP = {
     "umatan": 1000.0,
     "wide": 200.0,
     "sanrenpuku": 1000.0,
-    "sanrentan": 5000.0,
+    "sanrentan": 500.0,
     "fukusho": 50.0,
     "wakuren": 200.0,
 }

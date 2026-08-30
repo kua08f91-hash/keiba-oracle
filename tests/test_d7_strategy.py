@@ -641,9 +641,9 @@ class TestMaxOddsCap:
         from backend.predictor.bet_optimizer import MAX_ODDS_CAP
         assert MAX_ODDS_CAP["umatan"] == 1000.0
 
-    def test_sanrentan_cap_is_5000(self):
+    def test_sanrentan_cap_is_500(self):
         from backend.predictor.bet_optimizer import MAX_ODDS_CAP
-        assert MAX_ODDS_CAP["sanrentan"] == 5000.0
+        assert MAX_ODDS_CAP["sanrentan"] == 500.0
 
     def test_value_bets_exclude_over_cap_tansho(self):
         """Tansho at 99999x is beyond MAX_ODDS_CAP[tansho]=200 → excluded."""
