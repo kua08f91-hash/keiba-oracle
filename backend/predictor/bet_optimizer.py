@@ -736,12 +736,12 @@ def optimize_bets_dual(
     head_count = race_info.get("headCount", 16)
     if head_count < 3:
         return {"core_bets": [], "value_bets": [], "longshot": None,
-                "pattern": "", "layer1_active": False}
+                "pattern": "", "layer1_active": False, "layer2_active": False}
 
     probs = scores_to_probabilities(predictions, head_count)
     if len(probs) < 3:
         return {"core_bets": [], "value_bets": [], "longshot": None,
-                "pattern": "", "layer1_active": False}
+                "pattern": "", "layer1_active": False, "layer2_active": False}
 
     # AI ranking
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))

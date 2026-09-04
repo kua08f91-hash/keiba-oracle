@@ -1357,3 +1357,652 @@ class TestHelperFunctions:
         result = find_odds_for_bet(bet, odds_data)
         assert result["oddsMin"] == 2.0
         assert result["oddsMax"] == 3.0
+
+
+# ---------------------------------------------------------------------------
+# 17. B-layer (◯単勝穴狙い) — TestBLayer
+# ---------------------------------------------------------------------------
+
+def _make_b_layer_predictions(
+    honmei_score: float = 65.0,
+    niban_score: float = 62.0,
+    rest_count: int = 6,
+) -> list:
+    """Build predictions where:
+    - Horse 1 = ◎ (honmei_score)
+    - Horse 2 = ◯ (niban_score)
+    - Horses 3+ fill out the field.
+    """
+    scores = [honmei_score, niban_score] + [max(0.0, niban_score - 5.0 * (i + 1)) for i in range(rest_count)]
+    return [
+        {"horseNumber": i + 1, "score": float(s), "isScratched": False}
+        for i, s in enumerate(scores)
+    ]
+
+
+def _make_b_layer_odds(
+    niban_tansho_odds: float = 10.0,
+    honmei_tansho_odds: float = 5.0,
+    num_horses: int = 8,
+) -> dict:
+    """Odds where ◯ (horse 2) has high odds, ◎ (horse 1) is outside BUY range."""
+    horses = list(range(1, num_horses + 1))
+    tansho = []
+    for h in horses:
+        if h == 1:
+            odds = honmei_tansho_odds
+        elif h == 2:
+            odds = niban_tansho_odds
+        else:
+            odds = 15.0
+        tansho.append({"horses": [h], "odds": odds, "payout": int(odds * 100)})
+
+    umaren = []
+    wide = []
+    umatan = []
+    sanrenpuku = []
+    sanrentan = []
+    fukusho = []
+
+    for i, h1 in enumerate(horses):
+        fukusho.append({"horses": [h1], "odds": 2.5, "payout": 250,
+                        "oddsMin": 2.0, "oddsMax": 3.0})
+        for h2 in horses[i + 1:]:
+            pair = sorted([h1, h2])
+            umaren.append({"horses": pair, "odds": 12.0, "payout": 1200})
+            wide.append({"horses": pair, "odds": 4.5, "payout": 450})
+            umatan.append({"horses": [h1, h2], "odds": 20.0, "payout": 2000})
+            umatan.append({"horses": [h2, h1], "odds": 28.0, "payout": 2800})
+
+    for i, h1 in enumerate(horses):
+        for j, h2 in enumerate(horses):
+            if j <= i:
+                continue
+            for h3 in horses[j + 1:]:
+                trio = sorted([h1, h2, h3])
+                sanrenpuku.append({"horses": trio, "odds": 60.0, "payout": 6000})
+                sanrentan.append({"horses": [h1, h2, h3], "odds": 180.0, "payout": 18000})
+
+    return {
+        "tansho": tansho,
+        "fukusho": fukusho,
+        "umaren": umaren,
+        "umatan": umatan,
+        "wide": wide,
+        "sanrenpuku": sanrenpuku,
+        "sanrentan": sanrentan,
+    }
+
+
+def _make_b_layer_entries(
+    niban_odds: float = 10.0,
+    honmei_odds: float = 5.0,
+    num_horses: int = 8,
+) -> list:
+    """Build entries list so both ◎ and ◯ odds are found via entries path."""
+    return [
+        {
+            "horseNumber": i,
+            "frameNumber": i,
+            "odds": honmei_odds if i == 1 else (niban_odds if i == 2 else 15.0),
+            "popularity": i,
+            "isScratched": False,
+        }
+        for i in range(1, num_horses + 1)
+    ]
+
+
+def _run_b_layer(
+    honmei_score: float = 65.0,
+    niban_score: float = 62.0,
+    niban_odds: float = 10.0,
+    honmei_odds: float = 5.0,
+    num_horses: int = 8,
+    mc_samples: int = 200,
+) -> dict:
+    """Run optimize_bets_dual() with a canonical B-layer scenario."""
+    from backend.predictor.bet_optimizer import optimize_bets_dual
+    preds = _make_b_layer_predictions(honmei_score, niban_score, num_horses - 2)
+    odds = _make_b_layer_odds(niban_odds, honmei_odds, num_horses)
+    entries = _make_b_layer_entries(niban_odds, honmei_odds, num_horses)
+    race_info = {"raceId": "202608231201", "headCount": num_horses}
+    return optimize_bets_dual(preds, odds, race_info, entries=entries, mc_samples=mc_samples)
+
+
+class TestBLayer:
+    """B-layer (◯単勝穴狙い) — D7 B判定.
+
+    B判定条件:
+      - ◯ (AI 2位馬) オッズ >= 8.0  (REC_NIBAN_MIN_ODDS)
+      - ◯スコア >= 60.0              (REC_NIBAN_MIN_SCORE)
+      - A判定レースではない            (layer1_active == False)
+    """
+
+    # ------------------------------------------------------------------
+    # 1. B-layer activates when all three conditions are met
+    # ------------------------------------------------------------------
+
+    def test_b_layer_activates_when_conditions_met(self):
+        """◯odds=10 >= 8, ◯score=62 >= 60, not A-race → layer2_active=True."""
+        result = _run_b_layer(
+            honmei_score=65.0,   # < 68 → A不成立 (score gate fails for A)
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True, (
+            f"Expected layer2_active=True, got {result['layer2_active']}. "
+            f"layer1_active={result.get('layer1_active')}"
+        )
+
+    def test_b_layer_activates_at_odds_boundary(self):
+        """◯odds=8.0 (inclusive lower bound) → layer2_active=True."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=8.0,   # boundary
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True, (
+            f"Expected layer2_active=True at ◯odds=8.0 boundary, got {result['layer2_active']}"
+        )
+
+    def test_b_layer_activates_at_score_boundary(self):
+        """◯score=60.0 (inclusive lower bound) → layer2_active=True."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=60.0,  # boundary
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True, (
+            f"Expected layer2_active=True at ◯score=60.0 boundary, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 2. B-layer produces exactly 1 tansho bet for ◯ horse (not ◎)
+    # ------------------------------------------------------------------
+
+    def test_b_layer_produces_exactly_one_core_bet(self):
+        """When B-layer is active, core_bets contains exactly 1 bet."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        assert len(result["core_bets"]) == 1, (
+            f"Expected exactly 1 B-layer bet in core_bets, got {len(result['core_bets'])}"
+        )
+
+    def test_b_layer_bet_type_is_tansho(self):
+        """The B-layer bet must be type='tansho'."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        bet = result["core_bets"][0]
+        assert bet["type"] == "tansho", (
+            f"Expected B-layer bet type='tansho', got {bet['type']!r}"
+        )
+
+    def test_b_layer_bet_is_for_niban_not_honmei(self):
+        """The B-layer tansho must be on horse 2 (◯), NOT horse 1 (◎)."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        bet = result["core_bets"][0]
+        # Horse 2 is ◯ (AI 2nd rank) in our fixture
+        assert bet["horses"] == [2], (
+            f"B-layer bet must be on ◯ (horse 2), got horses={bet['horses']}"
+        )
+
+    def test_b_layer_bet_not_on_honmei(self):
+        """Confirm the B-layer bet horse is not the ◎ horse (horse 1)."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        bet = result["core_bets"][0]
+        assert 1 not in bet["horses"], (
+            f"B-layer bet must NOT be on ◎ (horse 1), got horses={bet['horses']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 3. B-layer does NOT activate when A conditions are met (A takes priority)
+    # ------------------------------------------------------------------
+
+    def test_b_layer_inactive_when_a_is_active(self):
+        """If A判定 is met (◎score>=68 AND ◎odds 2-4x), B must not activate."""
+        # ◎score=75 >= 68, ◎odds=3.0 in [2,4) → A判定
+        # ◯score=62 >= 60, ◯odds=10 >= 8 → B conditions would pass but A takes priority
+        result = _run_b_layer(
+            honmei_score=75.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=3.0,   # inside A range
+        )
+        assert result["layer1_active"] is True, "Precondition: A must be active"
+        assert result["layer2_active"] is False, (
+            f"B-layer must NOT activate when A is active, got layer2_active={result['layer2_active']}"
+        )
+
+    def test_b_layer_inactive_when_a_conditions_met_boundary(self):
+        """◎score=68 (min), ◎odds=2.0 (min) → A active, B inactive."""
+        result = _run_b_layer(
+            honmei_score=68.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=2.0,   # A lower bound
+        )
+        assert result["layer1_active"] is True
+        assert result["layer2_active"] is False
+
+    def test_a_active_core_bets_has_honmei_not_niban(self):
+        """When A is active (not B), core_bet horse is ◎ (horse 1), not ◯ (horse 2)."""
+        result = _run_b_layer(
+            honmei_score=75.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=3.0,
+        )
+        assert result["layer1_active"] is True
+        assert result["layer2_active"] is False
+        assert len(result["core_bets"]) == 1
+        bet = result["core_bets"][0]
+        assert bet["horses"] == [1], (
+            f"A-layer bet must be on ◎ (horse 1), got {bet['horses']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 4. B-layer does NOT activate when ◯odds < 8
+    # ------------------------------------------------------------------
+
+    def test_b_layer_inactive_when_niban_odds_below_threshold(self):
+        """◯odds=7.9 < 8.0 → layer2_active=False."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=7.9,    # just below threshold
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False for ◯odds=7.9, got {result['layer2_active']}"
+        )
+
+    def test_b_layer_inactive_when_niban_odds_low(self):
+        """◯odds=3.0 (typical favorite range) → B must not activate."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=3.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False
+
+    def test_b_layer_inactive_when_niban_odds_zero(self):
+        """◯odds=0 (missing/unknown) → B must not activate."""
+        from backend.predictor.bet_optimizer import optimize_bets_dual
+        preds = _make_b_layer_predictions(65.0, 62.0, 6)
+        odds = _make_b_layer_odds(10.0, 5.0, 8)
+        # entries with niban_odds=0 (absent)
+        entries = [
+            {
+                "horseNumber": i,
+                "frameNumber": i,
+                "odds": 5.0 if i == 1 else None,  # niban has no odds
+                "popularity": i,
+                "isScratched": False,
+            }
+            for i in range(1, 9)
+        ]
+        race_info = {"raceId": "202608231202", "headCount": 8}
+        result = optimize_bets_dual(preds, odds, race_info, entries=entries, mc_samples=100)
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when ◯odds=None/0, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 5. B-layer does NOT activate when ◯score < 60
+    # ------------------------------------------------------------------
+
+    def test_b_layer_inactive_when_niban_score_below_threshold(self):
+        """◯score=59.9 < 60.0 → layer2_active=False."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=59.9,  # just below threshold
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False for ◯score=59.9, got {result['layer2_active']}"
+        )
+
+    def test_b_layer_inactive_when_niban_score_low(self):
+        """◯score=40 (weak niban) → B must not activate."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=40.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False
+
+    def test_b_layer_inactive_when_niban_score_zero(self):
+        """◯score=0 → B must not activate."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=0.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False
+
+    # ------------------------------------------------------------------
+    # 6. layer2_active flag correctness
+    # ------------------------------------------------------------------
+
+    def test_layer2_active_key_exists_in_return(self):
+        """Return dict from optimize_bets_dual() must contain 'layer2_active' key."""
+        result = _run_b_layer()
+        assert "layer2_active" in result, (
+            f"Missing 'layer2_active' in result keys: {list(result.keys())}"
+        )
+
+    def test_layer2_active_is_bool(self):
+        """layer2_active must be exactly a bool (True or False), not truthy int."""
+        result = _run_b_layer()
+        assert isinstance(result["layer2_active"], bool), (
+            f"layer2_active must be bool, got {type(result['layer2_active'])}"
+        )
+
+    def test_layer2_active_false_when_b_conditions_not_met(self):
+        """layer2_active=False when both ◯odds and ◯score fail."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=55.0,  # < 60
+            niban_odds=5.0,    # < 8
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is False
+
+    def test_layer2_true_implies_core_bets_length_1(self):
+        """When layer2_active=True, core_bets must have exactly 1 bet."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        if result["layer2_active"]:
+            assert len(result["core_bets"]) == 1, (
+                f"layer2_active=True but core_bets has {len(result['core_bets'])} bets"
+            )
+
+    def test_layer2_false_implies_core_bets_empty_when_layer1_also_false(self):
+        """layer2_active=False AND layer1_active=False → core_bets=[]."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=55.0,
+            niban_odds=5.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer1_active"] is False
+        assert result["layer2_active"] is False
+        assert result["core_bets"] == [], (
+            f"Expected empty core_bets when both layers inactive, got {result['core_bets']}"
+        )
+
+    def test_layer1_and_layer2_mutually_exclusive(self):
+        """layer1_active and layer2_active must never both be True simultaneously."""
+        # A-race scenario
+        result_a = _run_b_layer(
+            honmei_score=75.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=3.0,
+        )
+        assert not (result_a["layer1_active"] and result_a["layer2_active"]), (
+            "layer1_active and layer2_active must not both be True"
+        )
+
+        # B-race scenario
+        result_b = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert not (result_b["layer1_active"] and result_b["layer2_active"]), (
+            "layer1_active and layer2_active must not both be True"
+        )
+
+    # ------------------------------------------------------------------
+    # 7. The ◯ tansho bet has correct fields
+    # ------------------------------------------------------------------
+
+    def _get_b_bet(self) -> dict:
+        """Helper: returns the single B-layer core bet."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True, "Precondition: B-layer must be active"
+        assert result["core_bets"], "Precondition: core_bets must not be empty"
+        return result["core_bets"][0]
+
+    def test_b_bet_has_odds_field(self):
+        """B-layer bet must carry an 'odds' field."""
+        bet = self._get_b_bet()
+        assert "odds" in bet, f"Missing 'odds' field in B-layer bet: {bet}"
+
+    def test_b_bet_odds_matches_niban_odds(self):
+        """B-layer bet odds must equal the ◯ tansho odds (10.0 in fixture)."""
+        bet = self._get_b_bet()
+        assert bet["odds"] == pytest.approx(10.0, abs=0.1), (
+            f"Expected ◯ tansho odds≈10.0, got {bet['odds']}"
+        )
+
+    def test_b_bet_odds_gte_rec_min(self):
+        """B-layer bet odds must be >= REC_NIBAN_MIN_ODDS=8.0."""
+        from backend.predictor.bet_optimizer import REC_NIBAN_MIN_ODDS
+        bet = self._get_b_bet()
+        assert bet["odds"] >= REC_NIBAN_MIN_ODDS, (
+            f"B-layer bet odds {bet['odds']} is below REC_NIBAN_MIN_ODDS={REC_NIBAN_MIN_ODDS}"
+        )
+
+    def test_b_bet_has_ev_field(self):
+        """B-layer bet must carry an 'ev' field."""
+        bet = self._get_b_bet()
+        assert "ev" in bet, f"Missing 'ev' field in B-layer bet: {bet}"
+
+    def test_b_bet_ev_is_numeric(self):
+        """EV field must be a float (not None, not string)."""
+        bet = self._get_b_bet()
+        assert isinstance(bet["ev"], float), (
+            f"Expected float for ev, got {type(bet['ev'])}: {bet['ev']}"
+        )
+
+    def test_b_bet_has_bet_size_field(self):
+        """B-layer bet must carry a 'betSize' field."""
+        bet = self._get_b_bet()
+        assert "betSize" in bet, f"Missing 'betSize' field in B-layer bet: {bet}"
+
+    def test_b_bet_bet_size_is_positive_int(self):
+        """betSize must be a positive integer >= 1."""
+        bet = self._get_b_bet()
+        assert isinstance(bet["betSize"], int), (
+            f"Expected int betSize, got {type(bet['betSize'])}"
+        )
+        assert bet["betSize"] >= 1, f"betSize must be >= 1, got {bet['betSize']}"
+
+    def test_b_bet_has_real_odds_true(self):
+        """B-layer bet must have hasRealOdds=True (odds from entries/tansho lookup)."""
+        bet = self._get_b_bet()
+        assert bet.get("hasRealOdds") is True, (
+            f"Expected hasRealOdds=True for B-layer bet, got {bet.get('hasRealOdds')}"
+        )
+
+    def test_b_bet_has_hit_prob_field(self):
+        """B-layer bet must have a 'hitProb' field in [0.0, 1.0]."""
+        bet = self._get_b_bet()
+        assert "hitProb" in bet, f"Missing 'hitProb' field in B-layer bet: {bet}"
+        assert 0.0 <= bet["hitProb"] <= 1.0, (
+            f"hitProb must be in [0,1], got {bet['hitProb']}"
+        )
+
+    def test_b_bet_has_rank_field(self):
+        """B-layer bet must have a 'rank' field."""
+        bet = self._get_b_bet()
+        assert "rank" in bet, f"Missing 'rank' field in B-layer bet: {bet}"
+
+    def test_b_bet_rank_is_1(self):
+        """Single B-layer bet must have rank=1."""
+        bet = self._get_b_bet()
+        assert bet["rank"] == 1, f"Expected rank=1 for B-layer bet, got {bet['rank']}"
+
+    def test_b_bet_has_type_label(self):
+        """B-layer bet must have typeLabel='単勝'."""
+        bet = self._get_b_bet()
+        assert bet.get("typeLabel") == "単勝", (
+            f"Expected typeLabel='単勝', got {bet.get('typeLabel')!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # 8. B-layer bet is in core_bets (not value_bets)
+    # ------------------------------------------------------------------
+
+    def test_b_bet_in_core_bets_not_value_bets(self):
+        """◯ tansho from B-layer must appear in core_bets, not value_bets."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        # Must be in core_bets
+        assert any(
+            b["type"] == "tansho" and b["horses"] == [2]
+            for b in result["core_bets"]
+        ), f"◯ tansho not found in core_bets: {result['core_bets']}"
+
+    def test_b_bet_not_duplicated_in_value_bets(self):
+        """◯ tansho bet must NOT also appear in value_bets (no duplication)."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        niban_tansho_key = ("tansho", (2,))
+        for vb in result["value_bets"]:
+            key = (vb["type"], tuple(vb["horses"]))
+            assert key != niban_tansho_key, (
+                f"◯ tansho appeared in value_bets (must only be in core_bets): {vb}"
+            )
+
+    def test_value_bets_still_populated_during_b_race(self):
+        """Even when B-layer is active, value_bets (INFO layer) still runs."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+        # INFO layer runs regardless of B/A status
+        assert isinstance(result["value_bets"], list), "value_bets must be a list during B-race"
+
+    def test_core_bets_is_list_when_b_active(self):
+        """core_bets must always be a list (even during B-race)."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=10.0,
+            honmei_odds=5.0,
+        )
+        assert isinstance(result["core_bets"], list)
+
+    # ------------------------------------------------------------------
+    # 9. B-layer constants validation
+    # ------------------------------------------------------------------
+
+    def test_rec_niban_min_odds_constant(self):
+        """REC_NIBAN_MIN_ODDS must equal 8.0."""
+        from backend.predictor.bet_optimizer import REC_NIBAN_MIN_ODDS
+        assert REC_NIBAN_MIN_ODDS == 8.0
+
+    def test_rec_niban_min_score_constant(self):
+        """REC_NIBAN_MIN_SCORE must equal 60.0."""
+        from backend.predictor.bet_optimizer import REC_NIBAN_MIN_SCORE
+        assert REC_NIBAN_MIN_SCORE == 60.0
+
+    # ------------------------------------------------------------------
+    # 10. Edge cases for B-layer
+    # ------------------------------------------------------------------
+
+    def test_b_layer_with_large_niban_odds(self):
+        """Very high ◯odds (e.g., 50x) still activates B-layer."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=62.0,
+            niban_odds=50.0,
+            honmei_odds=5.0,
+        )
+        assert result["layer2_active"] is True
+
+    def test_b_layer_inactive_when_only_one_horse(self):
+        """Single prediction → no ◯ horse → B cannot activate."""
+        from backend.predictor.bet_optimizer import optimize_bets_dual
+        preds = [{"horseNumber": 1, "score": 65.0, "isScratched": False}]
+        odds = {"tansho": [{"horses": [1], "odds": 10.0, "payout": 1000}]}
+        race_info = {"raceId": "202608231203", "headCount": 1}
+        result = optimize_bets_dual(preds, odds, race_info, entries=None, mc_samples=50)
+        # headCount < 3 → early return → layer2_active must be False
+        assert result["layer2_active"] is False
+
+    def test_b_layer_no_crash_when_niban_has_no_tansho_odds(self):
+        """If ◯ has no tansho odds in odds_data, B-layer should handle gracefully."""
+        from backend.predictor.bet_optimizer import optimize_bets_dual
+        preds = _make_b_layer_predictions(65.0, 62.0, 6)
+        # Tansho only has horse 1, not horse 2
+        odds = {
+            "tansho": [{"horses": [1], "odds": 5.0, "payout": 500}],
+            "umaren": [{"horses": [1, 2], "odds": 12.0, "payout": 1200}],
+        }
+        entries = _make_b_layer_entries(10.0, 5.0, 8)
+        race_info = {"raceId": "202608231204", "headCount": 8}
+        # Should not raise; B conditions pass on entries but ◯ tansho lookup fails
+        result = optimize_bets_dual(preds, odds, race_info, entries=entries, mc_samples=100)
+        assert isinstance(result, dict)
+        # layer2_active is set by entries lookup (niban_odds=10 >= 8), but
+        # _make_tansho_bet may return None if tansho odds missing for horse 2;
+        # core_bets will be empty but no crash must occur
+        assert isinstance(result["core_bets"], list)
+
+    def test_b_layer_both_flags_present_and_correct_type_when_inactive(self):
+        """Even when B is inactive, 'layer2_active' key is present and is bool False."""
+        result = _run_b_layer(
+            honmei_score=65.0,
+            niban_score=55.0,
+            niban_odds=5.0,
+            honmei_odds=5.0,
+        )
+        assert "layer2_active" in result
+        assert result["layer2_active"] is False
+        assert isinstance(result["layer2_active"], bool)
