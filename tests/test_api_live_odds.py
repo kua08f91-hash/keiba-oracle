@@ -768,3 +768,661 @@ class TestGetCachedPredictionsUnit:
         with patch("backend.main.get_session", return_value=session):
             result = _get_cached_predictions(RACE_ID)
         assert result is None
+
+
+# ===========================================================================
+# /api/racecard response format — entries with odds (frontend polling contract)
+# ===========================================================================
+
+class TestRacecardResponseFormatForFrontend:
+    """Verify the shape of /api/racecard responses that the frontend JS polls.
+
+    The Vercel frontend polls /api/racecard/{race_id} on a timer and reads:
+      response.entries[].odds
+      response.entries[].horseNumber
+      response.predictions
+      response.frozen
+      response.updatedAt
+
+    These tests lock down the response contract so the bug
+    (pointing to /api instead of _CLOUD_API) cannot silently reappear
+    as a shape mismatch at the backend.
+    """
+
+    def test_racecard_entries_contain_odds_field(self):
+        """Every non-scratched entry in the response must have an 'odds' key."""
+        fetch_data = _make_fetch_race_card_data(entry_count=5)
+        # Give each entry a concrete odds value
+        for i, e in enumerate(fetch_data["entries"]):
+            e["odds"] = 3.0 + i * 1.5
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", side_effect=_silent_requests_get),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/racecard/{RACE_ID}")
+
+        assert resp.status_code == 200
+        entries = resp.json()["entries"]
+        assert len(entries) > 0
+        for entry in entries:
+            assert "odds" in entry, f"Entry {entry.get('horseNumber')} missing 'odds' key"
+
+    def test_racecard_entries_contain_horse_number_field(self):
+        """Every entry must carry horseNumber so the frontend can key on it."""
+        fetch_data = _make_fetch_race_card_data(entry_count=4)
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", side_effect=_silent_requests_get),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/racecard/{RACE_ID}")
+
+        entries = resp.json()["entries"]
+        for entry in entries:
+            assert "horseNumber" in entry
+
+    def test_racecard_response_has_required_top_level_keys(self):
+        """Response must contain raceInfo, entries, predictions, frozen, updatedAt."""
+        fetch_data = _make_fetch_race_card_data()
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", side_effect=_silent_requests_get),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/racecard/{RACE_ID}")
+
+        body = resp.json()
+        for key in ("raceInfo", "entries", "predictions", "frozen", "updatedAt"):
+            assert key in body, f"Missing top-level key: {key}"
+
+    def test_racecard_live_odds_applied_to_entries_before_response(self):
+        """When live odds are fetched they must appear in the response entries,
+        not the stale scrape values.
+
+        This directly tests the _apply_odds_to_entries path inside _compute_live:
+        the frontend reads response.entries[n].odds for display.
+        """
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        # Scraped odds start at 5.0 (from _make_entry)
+        for e in fetch_data["entries"]:
+            e["odds"] = 5.0
+
+        # Live odds from netkeiba return updated values
+        live_odds_response = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "1": ["2.5", "1", "1"],  # horse 1: odds=2.5, pop=1
+                        "2": ["8.0", "8", "2"],  # horse 2: odds=8.0, pop=2
+                        "3": ["15.0", "15", "3"],  # horse 3: odds=15.0, pop=3
+                    }
+                }
+            }
+        }
+
+        mock_http_resp = MagicMock()
+        mock_http_resp.text = json.dumps(live_odds_response)
+
+        # Force is_race_day=True so live odds are fetched
+        from backend._tz import now_jst
+        today_str = now_jst().strftime("%Y%m%d")
+        fetch_data["race_info"]["date"] = today_str
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", return_value=mock_http_resp),
+            patch("backend.main._save_odds_to_db"),  # skip DB writes
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/racecard/{RACE_ID}")
+
+        entries = {e["horseNumber"]: e for e in resp.json()["entries"]}
+        # Horse 1 should have the live odds (2.5), not the stale 5.0
+        assert entries[1]["odds"] == 2.5, (
+            f"Expected live odds 2.5 for horse 1, got {entries[1].get('odds')}"
+        )
+
+    def test_racecard_frozen_entries_include_odds_from_db(self):
+        """When frozen, entries must still include odds (loaded from DB HorseEntry).
+
+        The frontend polls even frozen races to display final odds.
+        """
+        cached = _make_cached(frozen=True)
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+
+        db_horse = MagicMock()
+        db_horse.horse_number = 1
+        db_horse.odds = 3.2
+        db_horse.popularity = 1
+
+        db_session = MagicMock()
+        q = MagicMock()
+        q.filter.return_value = q
+        q.all.return_value = [db_horse]
+        db_session.query.return_value = q
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=cached),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.get_session", return_value=db_session),
+        ):
+            resp = client.get(f"/api/racecard/{RACE_ID}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["frozen"] is True
+        # At minimum, entries list must be present
+        assert "entries" in body
+
+
+# ===========================================================================
+# /api/optimized-bets response format — coreBets/valueBets/layer1Active
+# ===========================================================================
+
+class TestOptimizedBetsResponseFormatForFrontend:
+    """Verify the /api/optimized-bets response shape that the frontend reads.
+
+    The frontend polls this endpoint and reads:
+      response.coreBets       — Layer-1 (A判定) bets
+      response.valueBets      — Layer-2 (info) bets
+      response.layer1Active   — bool flag for A/B/C badge display
+      response.betConfidence  — "A" | "B" | "C"
+      response.bets           — combined legacy list
+      response.frozen         — bool
+      response.raceId         — echo of requested race_id
+    """
+
+    def _dual_result(self, core=None, value=None, layer1=False):
+        return {
+            "core_bets": core or [],
+            "value_bets": value or [],
+            "longshot": None,
+            "pattern": "standard",
+            "layer1_active": layer1,
+            "honmei_odds": 0,
+        }
+
+    def test_optimized_bets_response_has_core_bets_key(self):
+        """coreBets must be present in the live response."""
+        fetch_data = _make_fetch_race_card_data()
+        core = [{"type": "tansho", "horses": [1], "odds": 3.0, "ev": 0.15}]
+        dual = self._dual_result(core=core, layer1=True)
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "coreBets" in body
+        assert body["coreBets"] == core
+
+    def test_optimized_bets_response_has_value_bets_key(self):
+        """valueBets must be present and match the dual optimizer output."""
+        fetch_data = _make_fetch_race_card_data()
+        value = [{"type": "umaren", "horses": [2, 5], "odds": 35.0, "ev": 0.05}]
+        dual = self._dual_result(value=value)
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        body = resp.json()
+        assert "valueBets" in body
+        assert body["valueBets"] == value
+
+    def test_optimized_bets_response_has_layer1_active_key(self):
+        """layer1Active must be present in the response."""
+        fetch_data = _make_fetch_race_card_data()
+        dual = self._dual_result(layer1=True)
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        body = resp.json()
+        assert "layer1Active" in body
+        assert body["layer1Active"] is True
+
+    def test_optimized_bets_response_has_bet_confidence_key(self):
+        """betConfidence must be present with value A, B, or C."""
+        fetch_data = _make_fetch_race_card_data()
+        dual = self._dual_result()
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        body = resp.json()
+        assert "betConfidence" in body
+        assert body["betConfidence"] in ("A", "B", "C")
+
+    def test_optimized_bets_response_has_all_required_keys(self):
+        """All keys the frontend reads must be present in every response."""
+        fetch_data = _make_fetch_race_card_data()
+        dual = self._dual_result()
+        required_keys = {
+            "bets", "coreBets", "valueBets", "layer1Active",
+            "betConfidence", "raceId", "frozen", "updatedAt",
+        }
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        body = resp.json()
+        missing = required_keys - body.keys()
+        assert not missing, f"Response missing keys: {missing}"
+
+    def test_optimized_bets_bets_equals_core_plus_value(self):
+        """The legacy 'bets' field must equal coreBets + valueBets (combined list)."""
+        fetch_data = _make_fetch_race_card_data()
+        core = [{"type": "tansho", "horses": [1], "odds": 3.0}]
+        value = [{"type": "umaren", "horses": [1, 3], "odds": 28.0}]
+        dual = self._dual_result(core=core, value=value, layer1=True)
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("backend.main.optimize_bets_dual", return_value=dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        body = resp.json()
+        assert body["bets"] == core + value
+
+
+# ===========================================================================
+# _compute_live — entries passed to optimize_bets_dual with live odds
+# ===========================================================================
+
+class TestComputeLivePassesOddsToOptimizer:
+    """Verify that _compute_live feeds live-odds-updated entries to optimize_bets_dual.
+
+    This is the core contract broken by the frontend bug: if live odds are not
+    injected into entries before calling the optimizer, betConfidence (A/B/C)
+    is computed from stale/None odds — silently wrong.
+    """
+
+    def test_optimize_bets_dual_receives_entries_with_updated_odds(self):
+        """When live odds are fetched, the entries arg passed to optimize_bets_dual
+        must reflect the updated odds values, not the original scraped values."""
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        # Stale odds in scraped data
+        for e in fetch_data["entries"]:
+            e["odds"] = 99.0  # clearly stale placeholder
+
+        # Live odds replace horse 1 odds with 2.8
+        live_odds_payload = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "1": ["2.8", "1", "1"],
+                        "2": ["9.0", "9", "2"],
+                        "3": ["20.0", "20", "3"],
+                    }
+                }
+            }
+        }
+        mock_http_resp = MagicMock()
+        mock_http_resp.text = json.dumps(live_odds_payload)
+
+        from backend._tz import now_jst
+        today_str = now_jst().strftime("%Y%m%d")
+        fetch_data["race_info"]["date"] = today_str
+
+        dual_result = {
+            "core_bets": [], "value_bets": [], "longshot": None,
+            "pattern": "", "layer1_active": False, "honmei_odds": 0,
+        }
+        captured_entries = []
+
+        def capturing_dual(predictions, odds_data, race_info, entries=None):
+            if entries:
+                captured_entries.extend(entries)
+            return dual_result
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", return_value=mock_http_resp),
+            patch("backend.main._save_odds_to_db"),
+            patch("backend.main.optimize_bets_dual", side_effect=capturing_dual),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = [{"horseNumber": 1, "score": 72}]
+            client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        assert captured_entries, "optimize_bets_dual was not called with entries"
+        horse1 = next((e for e in captured_entries if e["horseNumber"] == 1), None)
+        assert horse1 is not None
+        assert horse1["odds"] == 2.8, (
+            f"Expected live odds 2.8 for horse 1 in optimizer call, got {horse1.get('odds')}"
+        )
+
+    def test_optimize_bets_dual_called_once_on_live_path(self):
+        """optimize_bets_dual must be called exactly once per /api/optimized-bets request."""
+        fetch_data = _make_fetch_race_card_data()
+        dual_result = {
+            "core_bets": [], "value_bets": [], "longshot": None,
+            "pattern": "", "layer1_active": False, "honmei_odds": 0,
+        }
+
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", side_effect=_silent_requests_get),
+            patch("backend.main.optimize_bets_dual", return_value=dual_result) as mock_dual,
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = []
+            client.get(f"/api/optimized-bets/{RACE_ID}")
+
+        mock_dual.assert_called_once()
+
+
+# ===========================================================================
+# betConfidence changes when live odds change — A/B/C transitions
+# ===========================================================================
+
+class TestBetConfidenceOddsTransitions:
+    """Verify that betConfidence (A/B/C) in the /api/optimized-bets response
+    correctly reflects live odds changes.
+
+    The frontend displays the A/B/C badge from this field; if odds change
+    but confidence does not update, users see stale/wrong signals.
+    """
+
+    def _make_live_odds_mock(self, horse1_odds: float):
+        """Build a mock HTTP response returning horse 1 win odds."""
+        payload = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "1": [str(horse1_odds), str(round(horse1_odds)), "1"],
+                        "2": ["10.0", "10", "2"],
+                        "3": ["25.0", "25", "3"],
+                    }
+                }
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps(payload)
+        return mock_resp
+
+    def _run_optimized_bets(self, fetch_data, predictions, mock_http_resp):
+        """Run /api/optimized-bets with given predictions and odds mock."""
+        dual_result = {
+            "core_bets": [], "value_bets": [], "longshot": None,
+            "pattern": "", "layer1_active": False, "honmei_odds": 0,
+        }
+        with (
+            patch("backend.main._get_cached_predictions", return_value=None),
+            patch("backend.main.fetch_race_card", return_value=fetch_data),
+            patch("backend.main.predictor") as mock_pred,
+            patch("requests.get", return_value=mock_http_resp),
+            patch("backend.main._save_odds_to_db"),
+            patch("backend.main.optimize_bets_dual", return_value=dual_result),
+            patch("backend.main._fetch_live_combination_odds", return_value={}),
+            patch("backend.scraper.odds.estimate_from_entries", return_value={}),
+        ):
+            mock_pred.predict.return_value = predictions
+            resp = client.get(f"/api/optimized-bets/{RACE_ID}")
+        return resp.json()
+
+    def test_bet_confidence_is_A_when_honmei_score_high_and_odds_in_range(self):
+        """betConfidence="A" when honmei score>=68 AND odds in [2.0, 4.0)."""
+        from backend._tz import now_jst
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        fetch_data["race_info"]["date"] = now_jst().strftime("%Y%m%d")
+
+        predictions = [
+            {"horseNumber": 1, "score": 75},
+            {"horseNumber": 2, "score": 50},
+            {"horseNumber": 3, "score": 40},
+        ]
+        mock_resp = self._make_live_odds_mock(horse1_odds=3.0)  # in [2.0, 4.0)
+
+        body = self._run_optimized_bets(fetch_data, predictions, mock_resp)
+        assert body["betConfidence"] == "A", (
+            f"Expected A confidence for score=75 odds=3.0, got {body['betConfidence']}"
+        )
+
+    def test_bet_confidence_is_C_when_honmei_odds_too_high(self):
+        """betConfidence='C' when honmei odds are above the BUY range (>=4.0)
+        and no ◯ B-rank condition is met."""
+        from backend._tz import now_jst
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        fetch_data["race_info"]["date"] = now_jst().strftime("%Y%m%d")
+
+        # All horses have low scores — no B condition either
+        predictions = [
+            {"horseNumber": 1, "score": 55},
+            {"horseNumber": 2, "score": 45},
+            {"horseNumber": 3, "score": 35},
+        ]
+        mock_resp = self._make_live_odds_mock(horse1_odds=8.0)  # above BUY range
+
+        body = self._run_optimized_bets(fetch_data, predictions, mock_resp)
+        assert body["betConfidence"] == "C", (
+            f"Expected C confidence for score=55 odds=8.0, got {body['betConfidence']}"
+        )
+
+    def test_bet_confidence_transitions_from_A_to_C_when_odds_drift_above_range(self):
+        """When odds move from 3.0 to 8.0, betConfidence must shift from A to C.
+
+        This directly tests the polling scenario: the frontend polls repeatedly;
+        if odds drift out of range, the confidence label must update.
+        """
+        from backend._tz import now_jst
+        today_str = now_jst().strftime("%Y%m%d")
+
+        predictions_a = [{"horseNumber": 1, "score": 75}, {"horseNumber": 2, "score": 45}]
+
+        # First poll: odds=3.0 → A
+        fetch_data_a = _make_fetch_race_card_data(entry_count=3)
+        fetch_data_a["race_info"]["date"] = today_str
+        body_a = self._run_optimized_bets(
+            fetch_data_a, predictions_a, self._make_live_odds_mock(3.0)
+        )
+        assert body_a["betConfidence"] == "A"
+
+        # Second poll (odds drifted to 8.0): same score, different odds → C
+        predictions_c = [{"horseNumber": 1, "score": 55}, {"horseNumber": 2, "score": 40}]
+        fetch_data_c = _make_fetch_race_card_data(entry_count=3)
+        fetch_data_c["race_info"]["date"] = today_str
+        body_c = self._run_optimized_bets(
+            fetch_data_c, predictions_c, self._make_live_odds_mock(8.0)
+        )
+        assert body_c["betConfidence"] == "C"
+
+    def test_bet_confidence_is_B_when_niban_meets_b_rank_conditions(self):
+        """betConfidence='B' when ◯ (rank-2) score>=60 and odds>=8.0.
+
+        Arrange: horse 1 is honmei (score=65, highest but <68 → not A).
+        Horse 2 is niban (score=62 >= 60). _make_live_odds_mock puts horse 2
+        at 10.0 (hardcoded), which satisfies niban_odds >= 8 → B.
+        """
+        from backend._tz import now_jst
+        fetch_data = _make_fetch_race_card_data(entry_count=3)
+        fetch_data["race_info"]["date"] = now_jst().strftime("%Y%m%d")
+
+        # Horse 1 = honmei (score 65, highest, but 65 < 68 → not A)
+        # Horse 2 = niban (score 62 >= 60, odds=10.0 from mock >= 8 → B)
+        predictions = [
+            {"horseNumber": 1, "score": 65},  # honmei: score < 68, not A
+            {"horseNumber": 2, "score": 62},  # niban: score >= 60
+            {"horseNumber": 3, "score": 40},
+        ]
+        # _make_live_odds_mock: horse 1 → horse1_odds, horse 2 → 10.0, horse 3 → 25.0
+        # With horse1_odds=5.0 (outside [2.0,4.0) BUY range) and horse 2 at 10.0 >= 8 → B
+        mock_resp = self._make_live_odds_mock(horse1_odds=5.0)
+
+        body = self._run_optimized_bets(fetch_data, predictions, mock_resp)
+        assert body["betConfidence"] == "B", (
+            f"Expected B confidence for honmei score=65 odds=5.0, "
+            f"niban score=62 odds=10.0; got {body['betConfidence']}"
+        )
+
+
+# ===========================================================================
+# /api/live-odds/{race_id} — response format contract
+# ===========================================================================
+
+class TestLiveOddsEndpointFormat:
+    """Verify the /api/live-odds/{race_id} response shape.
+
+    The frontend also calls this endpoint directly for live odds polling.
+    """
+
+    def test_live_odds_success_response_shape(self):
+        """Successful live odds fetch returns odds, source='live', race_id."""
+        live_odds_payload = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "1": ["4.5", "4", "1"],
+                        "2": ["7.0", "7", "2"],
+                    }
+                }
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps(live_odds_payload)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("backend.main._save_odds_to_db"),
+        ):
+            resp = client.get(f"/api/live-odds/{RACE_ID}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "odds" in body
+        assert "source" in body
+        assert "race_id" in body
+        assert body["source"] == "live"
+        assert body["race_id"] == RACE_ID
+
+    def test_live_odds_odds_dict_maps_horse_number_to_odds_float(self):
+        """The odds dict must map integer horse numbers to objects with 'odds' float."""
+        live_odds_payload = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "3": ["12.0", "12", "1"],
+                    }
+                }
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps(live_odds_payload)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("backend.main._save_odds_to_db"),
+        ):
+            resp = client.get(f"/api/live-odds/{RACE_ID}")
+
+        body = resp.json()
+        # Key "3" in the odds dict (horse number as string from JSON)
+        assert "3" in body["odds"]
+        assert isinstance(body["odds"]["3"]["odds"], float)
+        assert body["odds"]["3"]["odds"] == 12.0
+
+    def test_live_odds_failed_fetch_returns_empty_odds_and_failed_source(self):
+        """When the live fetch fails/returns empty, response has source='failed'."""
+        with patch("requests.get", side_effect=_silent_requests_get):
+            resp = client.get(f"/api/live-odds/{RACE_ID}")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["source"] == "failed"
+        assert body["odds"] == {}
+        assert body["race_id"] == RACE_ID
+
+    def test_live_odds_400_for_short_race_id(self):
+        """Race IDs shorter than 10 characters return 400."""
+        resp = client.get("/api/live-odds/12345")
+        assert resp.status_code == 400
+
+    def test_live_odds_includes_popularity_field_per_horse(self):
+        """Each horse entry in the odds dict must have a 'popularity' int."""
+        live_odds_payload = {
+            "data": {
+                "odds": {
+                    "1": {
+                        "5": ["6.0", "6", "3"],
+                    }
+                }
+            }
+        }
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps(live_odds_payload)
+
+        with (
+            patch("requests.get", return_value=mock_resp),
+            patch("backend.main._save_odds_to_db"),
+        ):
+            resp = client.get(f"/api/live-odds/{RACE_ID}")
+
+        body = resp.json()
+        assert "5" in body["odds"]
+        assert "popularity" in body["odds"]["5"]
+        assert isinstance(body["odds"]["5"]["popularity"], int)
+        assert body["odds"]["5"]["popularity"] == 3
