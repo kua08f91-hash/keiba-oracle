@@ -39,13 +39,7 @@ app = FastAPI(title="JRA Prediction API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://localhost:8080", "null",
-        "https://kua08f91-hash.github.io",  # GitHub Pages
-        "https://keiba-oracle.vercel.app",   # Vercel frontend
-        "https://*.vercel.app",              # Vercel preview deployments
-        "https://*.up.railway.app",          # Railway
-    ],
+    allow_origins=["*"],  # Allow all origins (public API, no auth)
     allow_methods=["*"],
     allow_headers=["*"],
 )
