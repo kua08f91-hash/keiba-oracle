@@ -79,7 +79,7 @@
 const _isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
 const _isVercel = window.location.hostname.includes("vercel.app");
 const _CLOUD_API = "https://keiba-oracle-api-production.up.railway.app/api";
-const API = _isLocal ? "http://localhost:8000/api" : _isVercel ? "/api" : _CLOUD_API;
+const API = _isLocal ? "http://localhost:8000/api" : _CLOUD_API;
 let weekData=[], activeDate="", scheduleCache={};
 
 function showList(){_stopOddsPolling();document.getElementById("page-list").classList.add("active");document.getElementById("page-detail").classList.remove("active");window.scrollTo(0,0);}
