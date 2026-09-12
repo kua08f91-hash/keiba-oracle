@@ -350,7 +350,11 @@ def _compute_live(race_id: str, include_bets: bool = False):
     is_race_day = race_date == today
     no_odds = sum(1 for e in entries if e.get("odds") is None and not e.get("isScratched"))
     if is_race_day or no_odds > 0:
-        live_odds = _fetch_live_win_odds(race_id)
+        try:
+            live_odds = _fetch_live_win_odds(race_id)
+        except Exception as exc:
+            logger.warning("Live odds fetch failed for %s (graceful degradation): %s", race_id, exc)
+            live_odds = {}
         if live_odds:
             _apply_odds_to_entries(entries, live_odds)
             _save_odds_to_db(race_id, live_odds)
