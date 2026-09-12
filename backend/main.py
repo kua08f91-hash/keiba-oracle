@@ -344,31 +344,7 @@ def _compute_live(race_id: str, include_bets: bool = False):
             data["entries"] = entries
             data["race_info"] = data2["race_info"]
 
-    # Check frozen cache — return frozen data with frozen-time odds
-    cached = _get_cached_predictions(race_id)
-    if cached and cached.get("frozen"):
-        # Use DB odds (frozen at freeze time) instead of latest scraped odds
-        db = get_session()
-        try:
-            for he in db.query(HorseEntry).filter(HorseEntry.race_id == race_id).all():
-                for e in entries:
-                    if e["horseNumber"] == he.horse_number and he.odds:
-                        e["odds"] = he.odds
-                        e["popularity"] = he.popularity
-        finally:
-            db.close()
-        return {
-            "raceInfo": data["race_info"],
-            "entries": entries,
-            "predictions": cached["predictions"],
-            "bets": cached.get("bets", []),
-            "longshot": cached.get("longshot"),
-            "pattern": cached.get("pattern", ""),
-            "frozen": True,
-            "updatedAt": cached["updated_at"],
-        }
-
-    # Fetch live win odds (single fetch for both predictions and bets)
+    # Always fetch live odds on race day (even for frozen races)
     race_date = data["race_info"].get("date", "")
     today = now_jst().strftime("%Y%m%d")
     is_race_day = race_date == today
@@ -378,6 +354,20 @@ def _compute_live(race_id: str, include_bets: bool = False):
         if live_odds:
             _apply_odds_to_entries(entries, live_odds)
             _save_odds_to_db(race_id, live_odds)
+
+    # Check frozen cache — return frozen predictions/bets but with live odds
+    cached = _get_cached_predictions(race_id)
+    if cached and cached.get("frozen"):
+        return {
+            "raceInfo": data["race_info"],
+            "entries": entries,  # Live odds already applied above
+            "predictions": cached["predictions"],
+            "bets": cached.get("bets", []),
+            "longshot": cached.get("longshot"),
+            "pattern": cached.get("pattern", ""),
+            "frozen": True,
+            "updatedAt": cached["updated_at"],
+        }
 
     # Predict with live-odds-injected entries
     predictions = predictor.predict(data["race_info"], entries)
