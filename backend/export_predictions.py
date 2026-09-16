@@ -73,14 +73,21 @@ def main():
 
     from datetime import datetime, timedelta
     today = datetime.now()
-    # Export for this weekend (Sat + Sun)
+    # Export for upcoming race days (Sat/Sun + any day with JRA races)
     dates = []
     for delta in range(0, 8):
         d = today + timedelta(days=delta)
+        ds = d.strftime("%Y%m%d")
         if d.weekday() in (5, 6):  # Sat, Sun
-            dates.append(d.strftime("%Y%m%d"))
+            dates.append(ds)
+        elif d.weekday() == 0:  # Mon (祝日開催の可能性)
+            # Check if races exist on this day
+            try:
+                if fetch_race_list(ds):
+                    dates.append(ds)
+            except Exception:
+                pass
     if not dates:
-        # If today is Sat/Sun, include today
         if today.weekday() in (5, 6):
             dates.append(today.strftime("%Y%m%d"))
 
