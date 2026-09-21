@@ -80,8 +80,7 @@ def main():
         ds = d.strftime("%Y%m%d")
         if d.weekday() in (5, 6):  # Sat, Sun
             dates.append(ds)
-        elif d.weekday() == 0:  # Mon (祝日開催の可能性)
-            # Check if races exist on this day
+        else:  # 平日 (祝日・変則開催の可能性)
             try:
                 if fetch_race_list(ds):
                     dates.append(ds)
