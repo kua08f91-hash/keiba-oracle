@@ -803,7 +803,12 @@ def optimize_bets_dual(
             None,
         )
         if not cand:
-            return None
+            # Candidate not in generated set (e.g. AI 4位) — create ad-hoc
+            cand = {"type": "tansho", "typeLabel": "単勝",
+                    "horses": [horse_hn], "ordered": False, "hitProb": 0.0}
+            # Estimate hitProb from probs if available
+            if horse_hn in probs:
+                cand["hitProb"] = probs[horse_hn] * HITPROB_DEFLATION.get("tansho", 1.0)
         oi = find_odds_for_bet(cand, odds_data)
         if not oi or oi["odds"] < 2.0:
             return None
