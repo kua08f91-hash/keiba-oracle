@@ -2006,3 +2006,558 @@ class TestBLayer:
         assert "layer2_active" in result
         assert result["layer2_active"] is False
         assert isinstance(result["layer2_active"], bool)
+
+
+# ---------------------------------------------------------------------------
+# 18. TestHybridBLayer — D7 ハイブリッドB判定
+# ---------------------------------------------------------------------------
+
+def _make_hybrid_predictions(
+    honmei_score: float,
+    niban_score: float,
+    sanban_score: float,
+    ai4_score: float,
+    rest_count: int = 4,
+) -> list:
+    """Build 8-horse predictions with explicit scores for positions 1-4."""
+    scores = [honmei_score, niban_score, sanban_score, ai4_score]
+    for i in range(rest_count):
+        scores.append(max(0.0, ai4_score - 5.0 * (i + 1)))
+    return [
+        {"horseNumber": i + 1, "score": float(s), "isScratched": False}
+        for i, s in enumerate(scores)
+    ]
+
+
+def _make_hybrid_entries(
+    honmei_odds: float,
+    niban_odds: float,
+    ai4_odds: float,
+    num_horses: int = 8,
+) -> list:
+    """Build entries with controlled odds for ◎ (h1), ◯ (h2), AI4 (h4)."""
+    result = []
+    for i in range(1, num_horses + 1):
+        if i == 1:
+            odds = honmei_odds
+        elif i == 2:
+            odds = niban_odds
+        elif i == 4:
+            odds = ai4_odds
+        else:
+            odds = 20.0
+        result.append({
+            "horseNumber": i,
+            "frameNumber": i,
+            "odds": odds,
+            "popularity": i,
+            "isScratched": False,
+        })
+    return result
+
+
+def _make_hybrid_odds(
+    honmei_odds: float,
+    niban_odds: float,
+    ai4_odds: float,
+    num_horses: int = 8,
+) -> dict:
+    """Build full odds_data with tansho entries for each horse."""
+    horses = list(range(1, num_horses + 1))
+    tansho = []
+    fukusho = []
+    umaren = []
+    umatan = []
+    wide = []
+    sanrenpuku = []
+    sanrentan = []
+
+    for h in horses:
+        if h == 1:
+            o = honmei_odds
+        elif h == 2:
+            o = niban_odds
+        elif h == 4:
+            o = ai4_odds
+        else:
+            o = 20.0
+        tansho.append({"horses": [h], "odds": o, "payout": int(o * 100)})
+        fukusho.append({"horses": [h], "odds": 2.5, "payout": 250,
+                        "oddsMin": 2.0, "oddsMax": 3.0})
+
+    for i, h1 in enumerate(horses):
+        for h2 in horses[i + 1:]:
+            pair = sorted([h1, h2])
+            umaren.append({"horses": pair, "odds": 15.0, "payout": 1500})
+            wide.append({"horses": pair, "odds": 5.0, "payout": 500})
+            umatan.append({"horses": [h1, h2], "odds": 25.0, "payout": 2500})
+            umatan.append({"horses": [h2, h1], "odds": 35.0, "payout": 3500})
+
+    for i, h1 in enumerate(horses):
+        for j, h2 in enumerate(horses):
+            if j <= i:
+                continue
+            for h3 in horses[j + 1:]:
+                trio = sorted([h1, h2, h3])
+                sanrenpuku.append({"horses": trio, "odds": 80.0, "payout": 8000})
+                sanrentan.append({"horses": [h1, h2, h3], "odds": 200.0, "payout": 20000})
+
+    return {
+        "tansho": tansho,
+        "fukusho": fukusho,
+        "umaren": umaren,
+        "umatan": umatan,
+        "wide": wide,
+        "sanrenpuku": sanrenpuku,
+        "sanrentan": sanrentan,
+    }
+
+
+def _run_hybrid(
+    honmei_score: float = 66.0,
+    niban_score: float = 63.0,
+    sanban_score: float = 58.0,
+    ai4_score: float = 61.0,
+    honmei_odds: float = 5.0,
+    niban_odds: float = 11.0,
+    ai4_odds: float = 15.0,
+    num_horses: int = 8,
+    mc_samples: int = 200,
+) -> dict:
+    """Run optimize_bets_dual() with a configurable hybrid B-layer scenario."""
+    from backend.predictor.bet_optimizer import optimize_bets_dual
+    preds = _make_hybrid_predictions(honmei_score, niban_score, sanban_score, ai4_score, num_horses - 4)
+    odds = _make_hybrid_odds(honmei_odds, niban_odds, ai4_odds, num_horses)
+    entries = _make_hybrid_entries(honmei_odds, niban_odds, ai4_odds, num_horses)
+    race_info = {"raceId": "202608231301", "headCount": num_horses}
+    return optimize_bets_dual(preds, odds, race_info, entries=entries, mc_samples=mc_samples)
+
+
+class TestHybridBLayer:
+    """D7 ハイブリッドB判定 — B1 (◯単勝) および B2 (AI4位単勝) の組み合わせテスト.
+
+    B1条件:
+      ◯score >= 62.0  (REC_B1_NIBAN_MIN_SCORE)
+      ◯odds >= 10.0   (REC_B1_NIBAN_MIN_ODDS)
+      ◎◯gap <= 7.0    (REC_B1_MAX_GAP)
+      NOT A-race
+
+    B2条件:
+      AI4 score >= 60.0          (REC_B2_AI4_MIN_SCORE)
+      10.0 <= AI4 odds <= 20.0   (REC_B2_AI4_MIN_ODDS / REC_B2_AI4_MAX_ODDS)
+      ◎ score >= 65.0            (REC_B2_HONMEI_MIN_SCORE)
+      NOT A-race
+      AI4 horse != B1 horse
+    """
+
+    # ------------------------------------------------------------------
+    # 1. B1 activates: ◯score>=62, odds>=10, gap<=7, not A
+    # ------------------------------------------------------------------
+
+    def test_b1_activates_when_all_conditions_met(self):
+        """B1: ◯score=63>=62, ◯odds=11>=10, gap=66-63=3<=7, ◎odds=5 outside A → layer2_active=True."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=63.0,   # score=63 >= 62
+            ai4_score=55.0,     # below B2 threshold → only B1 fires
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,    # >= 10
+            ai4_odds=25.0,      # outside B2 range (>20)
+        )
+        assert result["layer2_active"] is True, (
+            f"B1 should activate: layer2_active={result['layer2_active']}, "
+            f"layer1_active={result['layer1_active']}"
+        )
+        # B1 bet must be on horse 2 (◯)
+        assert any(b["horses"] == [2] and b["type"] == "tansho" for b in result["core_bets"]), (
+            f"Expected ◯ (horse 2) tansho in core_bets: {result['core_bets']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 2. B2 activates: AI4 score>=60, odds 10-20, ◎score>=65, not A
+    # ------------------------------------------------------------------
+
+    def test_b2_activates_when_all_conditions_met(self):
+        """B2: AI4 score=61>=60, odds=15 in [10,20], ◎score=66>=65, not A → layer2_active=True.
+
+        Scores [66, 61.5, 61.2, 61.0] are strictly decreasing so horse 4 stays
+        at AI rank 4.  niban_score=61.5 < 62 ensures B1 does not fire.
+        """
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=61.5,   # < 62 → B1 fails on score gate; keeps ordering
+            sanban_score=61.2,  # must be strictly between niban and ai4
+            ai4_score=61.0,     # >= 60; horse 4 stays at AI rank 4
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,    # irrelevant (B1 fails on score)
+            ai4_odds=15.0,      # in [10, 20]
+        )
+        assert result["layer2_active"] is True, (
+            f"B2 should activate: layer2_active={result['layer2_active']}, "
+            f"layer1_active={result['layer1_active']}"
+        )
+        # B2 bet must be on horse 4 (AI4)
+        assert any(b["horses"] == [4] and b["type"] == "tansho" for b in result["core_bets"]), (
+            f"Expected AI4 (horse 4) tansho in core_bets: {result['core_bets']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 3. B1 + B2 both activate → 2 core_bets
+    # ------------------------------------------------------------------
+
+    def test_b1_and_b2_both_activate_producing_two_core_bets(self):
+        """B1 and B2 can both fire simultaneously, yielding 2 core_bets.
+
+        Scores [66, 63, 62, 61] are strictly decreasing so each horse number
+        maps cleanly to its AI rank (horse N = AI rank N).
+        B1: niban(horse 2)=63>=62, gap=3<=7, odds=11>=10.
+        B2: ai4(horse 4)=61>=60, odds=15 in [10,20], honmei=66>=65.
+        """
+        result = _run_hybrid(
+            honmei_score=66.0,  # >= 65 for B2; < 68 so not A
+            niban_score=63.0,   # B1: score=63>=62, gap=3<=7
+            sanban_score=62.0,  # strictly between niban and ai4 to keep rank order
+            ai4_score=61.0,     # B2: score=61>=60; horse 4 stays at AI rank 4
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,    # B1: odds=11>=10
+            ai4_odds=15.0,      # B2: odds=15 in [10,20]
+        )
+        # Both B1 and B2 should fire
+        assert result["layer2_active"] is True, (
+            f"Expected layer2_active=True for B1+B2 scenario, got {result['layer2_active']}"
+        )
+        assert len(result["core_bets"]) == 2, (
+            f"Expected 2 core_bets when B1+B2 both fire, got {len(result['core_bets'])}: "
+            f"{result['core_bets']}"
+        )
+        # One bet on horse 2 (B1), one on horse 4 (B2)
+        horse_numbers = {b["horses"][0] for b in result["core_bets"]}
+        assert 2 in horse_numbers, f"B1 bet (horse 2) missing from core_bets: {result['core_bets']}"
+        assert 4 in horse_numbers, f"B2 bet (horse 4) missing from core_bets: {result['core_bets']}"
+
+    # ------------------------------------------------------------------
+    # 4. B1 doesn't activate when gap > 7
+    # ------------------------------------------------------------------
+
+    def test_b1_inactive_when_gap_exceeds_7(self):
+        """B1: gap = honmei_score - niban_score = 74 - 62 = 12 > 7 → B1 fails."""
+        result = _run_hybrid(
+            honmei_score=74.0,  # < 68 check: 74 >= 68, but odds=5 → A inactive
+            niban_score=62.0,   # gap = 74 - 62 = 12 > 7
+            ai4_score=55.0,     # B2 also fails (score < 60)
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,    # B1 odds ok
+            ai4_odds=25.0,      # outside B2 range
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        # B1 fails because gap=12>7; B2 fails because ai4_score=55<60
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when gap={74.0 - 62.0}>7, "
+            f"got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 5. B1 doesn't activate when ◯score < 62
+    # ------------------------------------------------------------------
+
+    def test_b1_inactive_when_niban_score_below_62(self):
+        """B1: ◯score=61.9 < 62.0 → B1 fails."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=61.9,   # just below 62
+            ai4_score=55.0,     # B2 also fails
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=25.0,
+        )
+        # Without B2 also failing, ensure only B1-related failure here
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when ◯score=61.9<62, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 6. B1 doesn't activate when ◯odds < 10
+    # ------------------------------------------------------------------
+
+    def test_b1_inactive_when_niban_odds_below_10(self):
+        """B1: ◯odds=9.9 < 10.0 → B1 fails."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=63.0,   # score ok
+            ai4_score=55.0,     # B2 also fails
+            honmei_odds=5.0,
+            niban_odds=9.9,     # just below 10
+            ai4_odds=25.0,
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when ◯odds=9.9<10, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 7. B2 doesn't activate when AI4 odds > 20
+    # ------------------------------------------------------------------
+
+    def test_b2_inactive_when_ai4_odds_above_20(self):
+        """B2: AI4 odds=20.1 > 20.0 → B2 fails."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=58.0,   # B1 fails (score<62)
+            ai4_score=61.0,     # B2 score ok
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=20.1,      # just above 20
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when AI4 odds=20.1>20, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 8. B2 doesn't activate when AI4 odds < 10
+    # ------------------------------------------------------------------
+
+    def test_b2_inactive_when_ai4_odds_below_10(self):
+        """B2: AI4 odds=9.9 < 10.0 → B2 fails."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=58.0,   # B1 fails (score<62)
+            ai4_score=61.0,     # B2 score ok
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=9.9,       # just below 10
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when AI4 odds=9.9<10, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 9. B2 doesn't activate when AI4 score < 60
+    # ------------------------------------------------------------------
+
+    def test_b2_inactive_when_ai4_score_below_60(self):
+        """B2: AI4 score=59.9 < 60.0 → B2 fails."""
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=58.0,   # B1 fails
+            ai4_score=59.9,     # just below 60
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=15.0,
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when AI4 score=59.9<60, got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 10. B2 doesn't activate when ◎score < 65
+    # ------------------------------------------------------------------
+
+    def test_b2_inactive_when_honmei_score_below_65(self):
+        """B2: ◎score=64.9 < 65.0 → B2 fails."""
+        result = _run_hybrid(
+            honmei_score=64.9,  # just below 65 for B2
+            niban_score=58.0,   # B1 fails
+            ai4_score=61.0,     # B2 score ok
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=15.0,
+        )
+        assert result["layer1_active"] is False, "Precondition: A must be inactive"
+        assert result["layer2_active"] is False, (
+            f"Expected layer2_active=False when ◎score=64.9<65 (B2 honmei gate), "
+            f"got {result['layer2_active']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 11. A-race blocks both B1 and B2
+    # ------------------------------------------------------------------
+
+    def test_a_race_blocks_both_b1_and_b2(self):
+        """When layer1_active=True (A-race), neither B1 nor B2 should fire."""
+        result = _run_hybrid(
+            honmei_score=72.0,  # >= 68 → A score gate passes
+            niban_score=63.0,   # B1 conditions would pass
+            ai4_score=61.0,     # B2 conditions would pass
+            honmei_odds=3.0,    # in [2.0, 4.0) → A odds gate passes
+            niban_odds=11.0,
+            ai4_odds=15.0,
+        )
+        assert result["layer1_active"] is True, "Precondition: A-race must be active"
+        assert result["layer2_active"] is False, (
+            f"B-layer must be blocked when A-race is active, got layer2_active={result['layer2_active']}"
+        )
+        # core_bets must contain only the ◎ tansho (A bet), not ◯ or AI4
+        assert len(result["core_bets"]) == 1, (
+            f"A-race must have exactly 1 core_bet, got {len(result['core_bets'])}"
+        )
+        assert result["core_bets"][0]["horses"] == [1], (
+            f"A-race core_bet must be on ◎ (horse 1), got {result['core_bets'][0]['horses']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 12. B2 ad-hoc tansho has correct horse number
+    # ------------------------------------------------------------------
+
+    def test_b2_adhoc_tansho_has_correct_horse_number(self):
+        """B2 creates an ad-hoc tansho for AI4 (horse 4); bet must reference horse 4.
+
+        Scores [66, 61.5, 61.2, 61.0] keep horse 4 at AI rank 4.
+        B1 fails (niban=61.5 < 62); B2 fires on horse 4.
+        """
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=61.5,   # < 62 → B1 fails; keeps ordering niban>sanban>ai4
+            sanban_score=61.2,
+            ai4_score=61.0,     # horse 4 at AI rank 4
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=15.0,
+        )
+        assert result["layer2_active"] is True, "Precondition: B2 must activate"
+        b2_bets = [b for b in result["core_bets"]
+                   if b["type"] == "tansho" and b["horses"] == [4]]
+        assert len(b2_bets) == 1, (
+            f"Expected exactly 1 AI4 (horse 4) tansho bet, got: {result['core_bets']}"
+        )
+        assert b2_bets[0]["horses"] == [4], (
+            f"B2 ad-hoc tansho must reference horse 4, got {b2_bets[0]['horses']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 13. B2 ad-hoc tansho has hitProb > 0
+    # ------------------------------------------------------------------
+
+    def test_b2_adhoc_tansho_has_positive_hit_prob(self):
+        """B2 ad-hoc tansho for AI4 must have hitProb > 0 (estimated from probs).
+
+        Scores [66, 61.5, 61.2, 61.0] keep horse 4 at AI rank 4.
+        B1 fails; B2 fires and estimates hitProb via probs dict.
+        """
+        result = _run_hybrid(
+            honmei_score=66.0,
+            niban_score=61.5,   # < 62 → B1 fails; keeps ordering niban>sanban>ai4
+            sanban_score=61.2,
+            ai4_score=61.0,     # horse 4 at AI rank 4
+            honmei_odds=5.0,
+            niban_odds=11.0,
+            ai4_odds=15.0,
+        )
+        assert result["layer2_active"] is True, "Precondition: B2 must activate"
+        b2_bet = next(
+            (b for b in result["core_bets"] if b["type"] == "tansho" and b["horses"] == [4]),
+            None,
+        )
+        assert b2_bet is not None, "B2 bet on horse 4 not found"
+        assert b2_bet["hitProb"] > 0, (
+            f"B2 ad-hoc tansho hitProb must be > 0, got {b2_bet['hitProb']}"
+        )
+
+    # ------------------------------------------------------------------
+    # 14. evaluate_bet_confidence returns "B" for B1 condition
+    # ------------------------------------------------------------------
+
+    def test_evaluate_bet_confidence_returns_b_for_b1_conditions(self):
+        """evaluate_bet_confidence returns 'B' when B1 conditions are met."""
+        from backend.predictor.bet_optimizer import evaluate_bet_confidence
+        preds = _make_hybrid_predictions(
+            honmei_score=66.0,
+            niban_score=63.0,   # B1: score=63>=62
+            sanban_score=55.0,
+            ai4_score=50.0,
+        )
+        entries = _make_hybrid_entries(
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,    # B1: >=10
+            ai4_odds=25.0,
+        )
+        # gap = 66 - 63 = 3 <= 7
+        result = evaluate_bet_confidence(preds, {}, entries)
+        assert result == "B", (
+            f"Expected evaluate_bet_confidence='B' for B1 conditions, got {result!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # 15. evaluate_bet_confidence returns "B" for B2 condition
+    # ------------------------------------------------------------------
+
+    def test_evaluate_bet_confidence_returns_b_for_b2_conditions(self):
+        """evaluate_bet_confidence returns 'B' when B2 conditions are met.
+
+        Scores [66, 61.5, 61.2, 61.0] keep horse 4 at AI rank 4.
+        B1 fails (niban=61.5 < 62).
+        evaluate_bet_confidence uses ai_sorted[3] = horse 4 (score=61.0) → checks
+        entries for horse 4 which has ai4_odds=15.0 (in [10,20]).
+        """
+        from backend.predictor.bet_optimizer import evaluate_bet_confidence
+        preds = _make_hybrid_predictions(
+            honmei_score=66.0,  # >= 65 for B2
+            niban_score=61.5,   # < 62 → B1 fails; keeps ordering niban>sanban>ai4
+            sanban_score=61.2,
+            ai4_score=61.0,     # B2: score>=60; horse 4 at AI rank 4
+        )
+        entries = _make_hybrid_entries(
+            honmei_odds=5.0,    # outside A range
+            niban_odds=11.0,
+            ai4_odds=15.0,      # B2: in [10, 20]; assigned to horseNumber==4
+        )
+        result = evaluate_bet_confidence(preds, {}, entries)
+        assert result == "B", (
+            f"Expected evaluate_bet_confidence='B' for B2 conditions, got {result!r}"
+        )
+
+    # ------------------------------------------------------------------
+    # 16. Constants have correct values
+    # ------------------------------------------------------------------
+
+    def test_rec_b1_niban_min_score_constant(self):
+        """REC_B1_NIBAN_MIN_SCORE must equal 62.0."""
+        from backend.predictor.bet_optimizer import REC_B1_NIBAN_MIN_SCORE
+        assert REC_B1_NIBAN_MIN_SCORE == 62.0, (
+            f"Expected REC_B1_NIBAN_MIN_SCORE=62.0, got {REC_B1_NIBAN_MIN_SCORE}"
+        )
+
+    def test_rec_b1_niban_min_odds_constant(self):
+        """REC_B1_NIBAN_MIN_ODDS must equal 10.0."""
+        from backend.predictor.bet_optimizer import REC_B1_NIBAN_MIN_ODDS
+        assert REC_B1_NIBAN_MIN_ODDS == 10.0, (
+            f"Expected REC_B1_NIBAN_MIN_ODDS=10.0, got {REC_B1_NIBAN_MIN_ODDS}"
+        )
+
+    def test_rec_b1_max_gap_constant(self):
+        """REC_B1_MAX_GAP must equal 7.0."""
+        from backend.predictor.bet_optimizer import REC_B1_MAX_GAP
+        assert REC_B1_MAX_GAP == 7.0, (
+            f"Expected REC_B1_MAX_GAP=7.0, got {REC_B1_MAX_GAP}"
+        )
+
+    def test_rec_b2_ai4_min_score_constant(self):
+        """REC_B2_AI4_MIN_SCORE must equal 60.0."""
+        from backend.predictor.bet_optimizer import REC_B2_AI4_MIN_SCORE
+        assert REC_B2_AI4_MIN_SCORE == 60.0, (
+            f"Expected REC_B2_AI4_MIN_SCORE=60.0, got {REC_B2_AI4_MIN_SCORE}"
+        )
+
+    def test_rec_b2_ai4_min_odds_constant(self):
+        """REC_B2_AI4_MIN_ODDS must equal 10.0."""
+        from backend.predictor.bet_optimizer import REC_B2_AI4_MIN_ODDS
+        assert REC_B2_AI4_MIN_ODDS == 10.0, (
+            f"Expected REC_B2_AI4_MIN_ODDS=10.0, got {REC_B2_AI4_MIN_ODDS}"
+        )
+
+    def test_rec_b2_ai4_max_odds_constant(self):
+        """REC_B2_AI4_MAX_ODDS must equal 20.0."""
+        from backend.predictor.bet_optimizer import REC_B2_AI4_MAX_ODDS
+        assert REC_B2_AI4_MAX_ODDS == 20.0, (
+            f"Expected REC_B2_AI4_MAX_ODDS=20.0, got {REC_B2_AI4_MAX_ODDS}"
+        )
+
+    def test_rec_b2_honmei_min_score_constant(self):
+        """REC_B2_HONMEI_MIN_SCORE must equal 65.0."""
+        from backend.predictor.bet_optimizer import REC_B2_HONMEI_MIN_SCORE
+        assert REC_B2_HONMEI_MIN_SCORE == 65.0, (
+            f"Expected REC_B2_HONMEI_MIN_SCORE=65.0, got {REC_B2_HONMEI_MIN_SCORE}"
+        )
