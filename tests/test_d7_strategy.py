@@ -1496,27 +1496,27 @@ class TestBLayer:
         )
 
     def test_b_layer_activates_at_odds_boundary(self):
-        """◯odds=8.0 (inclusive lower bound) → layer2_active=True."""
+        """B1: ◯odds=10.0 (inclusive lower bound) → layer2_active=True."""
         result = _run_b_layer(
-            honmei_score=65.0,
+            honmei_score=69.0,
             niban_score=62.0,
-            niban_odds=8.0,   # boundary
+            niban_odds=10.0,   # B1 boundary
             honmei_odds=5.0,
         )
         assert result["layer2_active"] is True, (
-            f"Expected layer2_active=True at ◯odds=8.0 boundary, got {result['layer2_active']}"
+            f"Expected layer2_active=True at ◯odds=10.0 boundary, got {result['layer2_active']}"
         )
 
     def test_b_layer_activates_at_score_boundary(self):
-        """◯score=60.0 (inclusive lower bound) → layer2_active=True."""
+        """B1: ◯score=62.0 (inclusive lower bound) → layer2_active=True."""
         result = _run_b_layer(
-            honmei_score=65.0,
-            niban_score=60.0,  # boundary
-            niban_odds=10.0,
+            honmei_score=69.0,
+            niban_score=62.0,  # B1 boundary
+            niban_odds=12.0,
             honmei_odds=5.0,
         )
         assert result["layer2_active"] is True, (
-            f"Expected layer2_active=True at ◯score=60.0 boundary, got {result['layer2_active']}"
+            f"Expected layer2_active=True at ◯score=62.0 boundary, got {result['layer2_active']}"
         )
 
     # ------------------------------------------------------------------
@@ -1945,12 +1945,12 @@ class TestBLayer:
     def test_rec_niban_min_odds_constant(self):
         """REC_NIBAN_MIN_ODDS must equal 8.0."""
         from backend.predictor.bet_optimizer import REC_NIBAN_MIN_ODDS
-        assert REC_NIBAN_MIN_ODDS == 8.0
+        assert REC_NIBAN_MIN_ODDS == 10.0
 
     def test_rec_niban_min_score_constant(self):
         """REC_NIBAN_MIN_SCORE must equal 60.0."""
         from backend.predictor.bet_optimizer import REC_NIBAN_MIN_SCORE
-        assert REC_NIBAN_MIN_SCORE == 60.0
+        assert REC_NIBAN_MIN_SCORE == 62.0
 
     # ------------------------------------------------------------------
     # 10. Edge cases for B-layer

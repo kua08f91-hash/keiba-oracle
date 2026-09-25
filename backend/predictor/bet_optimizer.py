@@ -53,9 +53,19 @@ SHOUBU_MIN_SCORE = 68.0       # 勝負レース判定: ◎>=68
 BUY_HONMEI_ODDS_MIN = 2.0
 BUY_HONMEI_ODDS_MAX = 4.0
 
-# D7 REC layer (B判定): ◯単勝 — ◯odds>=8 AND ◯score>=60
-REC_NIBAN_MIN_ODDS = 8.0      # ◯オッズ下限
-REC_NIBAN_MIN_SCORE = 60.0    # ◯スコア下限
+# D7 REC layer (B判定): ハイブリッド
+# B1: ◯単勝 — ◯score>=62 AND ◯odds>=10 AND ◎◯gap<=7
+REC_B1_NIBAN_MIN_SCORE = 62.0
+REC_B1_NIBAN_MIN_ODDS = 10.0
+REC_B1_MAX_GAP = 7.0
+# B2: AI4位単勝 — 4位score>=60 AND 4位odds 10-20 AND ◎score>=65
+REC_B2_AI4_MIN_SCORE = 60.0
+REC_B2_AI4_MIN_ODDS = 10.0
+REC_B2_AI4_MAX_ODDS = 20.0
+REC_B2_HONMEI_MIN_SCORE = 65.0
+# Legacy
+REC_NIBAN_MIN_ODDS = REC_B1_NIBAN_MIN_ODDS
+REC_NIBAN_MIN_SCORE = REC_B1_NIBAN_MIN_SCORE
 
 # D7 INFO layer: EV>0の全券種を参考表記
 INFO_BET_TYPES = {"tansho", "umaren", "umatan", "wide", "sanrenpuku", "sanrentan"}
@@ -812,22 +822,49 @@ def optimize_bets_dual(
         if bet:
             core_bets.append(bet)
 
-    # B判定: ◯単勝 (◯odds>=8 AND ◯score>=60, A判定と重複しないレースのみ)
-    niban_hn = ai_sorted[1]["horseNumber"] if len(ai_sorted) >= 2 else 0
-    niban_score = ai_sorted[1].get("score", 0) if len(ai_sorted) >= 2 else 0
-    niban_odds = 0.0
-    if entries and niban_hn:
+    # B判定: ハイブリッド (A判定と重複しないレースのみ)
+    layer2_active = False
+
+    def _get_entry_odds(horse_hn):
+        if not entries:
+            return 0.0
         for e in entries:
-            if e.get("horseNumber") == niban_hn and e.get("odds"):
-                niban_odds = e["odds"]
-                break
-    layer2_active = (niban_odds >= REC_NIBAN_MIN_ODDS
-                     and niban_score >= REC_NIBAN_MIN_SCORE
-                     and not layer1_active)
-    if layer2_active:
-        bet = _make_tansho_bet(niban_hn, 1)
-        if bet:
-            core_bets.append(bet)
+            if e.get("horseNumber") == horse_hn and e.get("odds"):
+                return e["odds"]
+        return 0.0
+
+    if not layer1_active:
+        # B1: ◯単勝 — ◯score>=62 AND ◯odds>=10 AND gap<=7
+        if len(ai_sorted) >= 2:
+            niban_hn = ai_sorted[1]["horseNumber"]
+            niban_score = ai_sorted[1].get("score", 0)
+            niban_odds = _get_entry_odds(niban_hn)
+            gap_12 = honmei_score - niban_score
+            b1_active = (niban_score >= REC_B1_NIBAN_MIN_SCORE
+                         and niban_odds >= REC_B1_NIBAN_MIN_ODDS
+                         and gap_12 <= REC_B1_MAX_GAP)
+            if b1_active:
+                bet = _make_tansho_bet(niban_hn, 1)
+                if bet:
+                    core_bets.append(bet)
+                    layer2_active = True
+
+        # B2: AI4位単勝 — 4位score>=60 AND odds 10-20 AND ◎score>=65
+        if len(ai_sorted) >= 4:
+            ai4_hn = ai_sorted[3]["horseNumber"]
+            ai4_score = ai_sorted[3].get("score", 0)
+            ai4_odds = _get_entry_odds(ai4_hn)
+            b2_active = (ai4_score >= REC_B2_AI4_MIN_SCORE
+                         and REC_B2_AI4_MIN_ODDS <= ai4_odds <= REC_B2_AI4_MAX_ODDS
+                         and honmei_score >= REC_B2_HONMEI_MIN_SCORE)
+            if b2_active:
+                # B1と同じ馬でなければ追加
+                existing_hns = {b["horses"][0] for b in core_bets if b["type"] == "tansho"}
+                if ai4_hn not in existing_hns:
+                    bet = _make_tansho_bet(ai4_hn, 1)
+                    if bet:
+                        core_bets.append(bet)
+                        layer2_active = True
 
     # ── INFO layer: EV>0 の買い目を参考表記 (全レース) ──
     core_keys = {(b["type"], tuple(b["horses"])) for b in core_bets}
@@ -1077,17 +1114,32 @@ def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = 
             and BUY_HONMEI_ODDS_MIN <= honmei_odds < BUY_HONMEI_ODDS_MAX):
         return "A"
 
-    # B: 推奨 (◯単勝穴狙い: ◯odds>=8 AND ◯score>=60)
+    # B: 推奨 — ハイブリッド (B1 or B2)
+    def _get_odds(hn):
+        if not entries:
+            return 0.0
+        for e in entries:
+            if e.get("horseNumber") == hn and e.get("odds"):
+                return e["odds"]
+        return 0.0
+
+    # B1: ◯単勝 — ◯score>=62 AND ◯odds>=10 AND gap<=7
     if len(ai_sorted) >= 2:
         niban_score = ai_sorted[1].get("score", 0)
-        niban_hn = ai_sorted[1].get("horseNumber", 0)
-        niban_odds = 0.0
-        if entries:
-            for e in entries:
-                if e.get("horseNumber") == niban_hn and e.get("odds"):
-                    niban_odds = e["odds"]
-                    break
-        if niban_odds >= REC_NIBAN_MIN_ODDS and niban_score >= REC_NIBAN_MIN_SCORE:
+        niban_odds = _get_odds(ai_sorted[1].get("horseNumber", 0))
+        gap = honmei_score - niban_score
+        if (niban_score >= REC_B1_NIBAN_MIN_SCORE
+                and niban_odds >= REC_B1_NIBAN_MIN_ODDS
+                and gap <= REC_B1_MAX_GAP):
+            return "B"
+
+    # B2: AI4位単勝 — 4位score>=60 AND odds 10-20 AND ◎score>=65
+    if len(ai_sorted) >= 4:
+        ai4_score = ai_sorted[3].get("score", 0)
+        ai4_odds = _get_odds(ai_sorted[3].get("horseNumber", 0))
+        if (ai4_score >= REC_B2_AI4_MIN_SCORE
+                and REC_B2_AI4_MIN_ODDS <= ai4_odds <= REC_B2_AI4_MAX_ODDS
+                and honmei_score >= REC_B2_HONMEI_MIN_SCORE):
             return "B"
 
     return "C"

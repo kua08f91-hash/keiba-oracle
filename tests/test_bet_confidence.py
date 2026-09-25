@@ -85,9 +85,9 @@ class TestBRank:
         assert result == "B"
 
     def test_niban_at_threshold(self):
-        """◯odds=8.0, ◯score=60.0 (境界値) → 'B'."""
-        predictions = _make_predictions([65, 60, 40])
-        entries = _make_entries({1: 5.0, 2: 8.0, 3: 15.0})
+        """◯odds=10.0, ◯score=62.0 (境界値) → 'B'."""
+        predictions = _make_predictions([65, 62, 40])
+        entries = _make_entries({1: 5.0, 2: 10.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "B"
 
