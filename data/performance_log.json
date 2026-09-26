@@ -50,5 +50,14 @@
     "date": "2026-04-13",
     "type": "retrain",
     "note": "1227 races, diversify optimized: wide/tansho priority, longshot tightened (hitP>=0.5%, odds<=100x)"
+  },
+  {
+    "date": "2026-08-24",
+    "races": 48,
+    "tansho": 4.2,
+    "umaren": 0.0,
+    "wide": 8.3,
+    "sanrenpuku": 0.0,
+    "winner_in_top3": 22.9
   }
 ]
