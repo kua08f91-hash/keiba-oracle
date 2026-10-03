@@ -197,7 +197,7 @@ async function loadAndRenderDay(ds){
 
   // API first for race list
   if(API){
-    try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(10000)});const data=await r.json();
+    try{const r=await fetch(`${API}/race-list?date=${ds}&_t=${Date.now()}`,{signal:AbortSignal.timeout(30000)});const data=await r.json();
       const sc=data.map(s=>({code:s.code,name:s.name,races:(s.races||[]).map(r=>{
         const rid=r.race_id||r.raceId;
         return{raceId:rid,raceNumber:r.race_number??r.raceNumber,raceName:r.race_name||r.raceName||"",raceInfo:{grade:r.grade||null},startTime:r.start_time||r.startTime||"",confidence:confMap[rid]||""};
@@ -372,8 +372,8 @@ async function loadRaceDetail(id){
     try{
       const t=Date.now();
       const [cr, br] = await Promise.all([
-        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(10000)}),
-        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(10000)}).catch(()=>null),
+        fetch(`${API}/racecard/${id}?_t=${t}`,{signal:AbortSignal.timeout(30000)}),
+        fetch(`${API}/optimized-bets/${id}?_t=${t}`,{signal:AbortSignal.timeout(30000)}).catch(()=>null),
       ]);
       if(!cr.ok)throw Error("API error");
       const c=await cr.json();dE=c.entries||[];dP=c.predictions||[];dB=[];dLongshot=null;
@@ -400,7 +400,7 @@ async function loadRaceDetail(id){
       // If odds are missing, fetch live-odds in background (non-blocking render)
       const _noOdds=dE.filter(e=>e.odds==null&&!e.isScratched).length;
       if(_noOdds>dE.length*0.3){
-        fetch(`${API}/live-odds/${id}?_t=${t}`,{signal:AbortSignal.timeout(15000)})
+        fetch(`${API}/live-odds/${id}?_t=${t}`,{signal:AbortSignal.timeout(30000)})
           .then(r=>r.ok?r.json():null).then(d=>{
             if(d&&d.odds){
               for(const e of dE){const lo=d.odds[String(e.horseNumber)];if(lo){e.odds=lo.odds;e.popularity=lo.popularity;}}
@@ -461,14 +461,14 @@ function _stopOddsPolling(){
 async function _refreshLiveOdds(raceId){
   if(_currentOddsRaceId!==raceId)return;
   try{
-    const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+    const r=await fetch(`${API}/racecard/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(30000)});
     if(!r.ok)return;
     const data=await r.json();
     // Frozen race — fetch bets first, then render everything at once to prevent flash
     if(data.frozen){
       let frozenBets=dB,frozenLongshot=dLongshot;
       try{
-        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+        const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(30000)});
         if(br.ok){const bd=await br.json();frozenBets=bd?.bets||[];frozenLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';
           if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
           const pb=document.getElementById("detail-pattern");
@@ -494,7 +494,7 @@ async function _refreshLiveOdds(raceId){
     if(noOddsCount>totalActive*0.5){
       // Too many missing odds — fetch directly via live-odds endpoint
       try{
-        const lor=await fetch(`${API}/live-odds/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+        const lor=await fetch(`${API}/live-odds/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(30000)});
         if(lor.ok){
           const lod=await lor.json();
           if(lod.odds&&Object.keys(lod.odds).length>0){
@@ -529,7 +529,7 @@ async function _refreshLiveOdds(raceId){
     // Always refresh bets + render (even if odds unchanged, combination odds may have shifted)
     renderDetail(data.raceInfo||{},document.getElementById("detail-pattern")?.textContent||"");
     try{
-      const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(15000)});
+      const br=await fetch(`${API}/optimized-bets/${raceId}?_t=${Date.now()}`,{signal:AbortSignal.timeout(30000)});
       if(br.ok){const bd=await br.json();dB=bd?.bets||[];dLongshot=bd?.longshot||null;_betConfidence=bd?.betConfidence||'C';_coreBets=bd?.coreBets||[];_valueBets=bd?.valueBets||[];_layer1Active=bd?.layer1Active||false;if(bd?.analysis){const ae=document.getElementById('ai-analysis');const at=document.getElementById('ai-analysis-text');if(ae&&at){at.textContent=bd.analysis;ae.style.display='';}}
         const pb=document.getElementById("detail-pattern");
         if(pb&&bd.pattern){const pc={"本命堅軸":"bg-red-500","混戦模様":"bg-blue-500","2強対決":"bg-purple-500","標準配置":"bg-gray-500","少頭数":"bg-gray-400"};pb.className=(pc[bd.pattern]||"bg-gray-500")+" text-white text-[9px] font-black px-2 py-0.5 rounded";pb.textContent=bd.pattern;}
