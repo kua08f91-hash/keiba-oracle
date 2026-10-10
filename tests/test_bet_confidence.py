@@ -85,9 +85,9 @@ class TestBRank:
         assert result == "B"
 
     def test_niban_at_threshold(self):
-        """◯odds=10.0, ◯score=62.0 (境界値) → 'B'."""
-        predictions = _make_predictions([65, 62, 40])
-        entries = _make_entries({1: 5.0, 2: 10.0, 3: 15.0})
+        """◎odds=4.5, ◎score=62 (B1条件) → 'B'."""
+        predictions = _make_predictions([62, 50, 40])
+        entries = _make_entries({1: 4.5, 2: 10.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "B"
 
@@ -98,17 +98,17 @@ class TestBRank:
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "A"
 
-    def test_niban_low_odds_not_b(self):
-        """◯odds=5.0 (8倍未満) → 'C'."""
-        predictions = _make_predictions([65, 62, 40])
-        entries = _make_entries({1: 5.0, 2: 5.0, 3: 15.0})
+    def test_honmei_low_odds_not_b(self):
+        """◎odds=3.0 (4倍未満, A条件外) → 'C'."""
+        predictions = _make_predictions([62, 50, 40])
+        entries = _make_entries({1: 3.0, 2: 5.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "C"
 
-    def test_niban_low_score_not_b(self):
-        """◯score=58 (60未満) → 'C'."""
-        predictions = _make_predictions([65, 58, 40])
-        entries = _make_entries({1: 5.0, 2: 10.0, 3: 15.0})
+    def test_honmei_low_score_not_b(self):
+        """◎score=60 (62未満) → 'C'."""
+        predictions = _make_predictions([60, 50, 40])
+        entries = _make_entries({1: 4.5, 2: 10.0, 3: 15.0})
         result = evaluate_bet_confidence(predictions, _make_race_info(16), entries)
         assert result == "C"
 
