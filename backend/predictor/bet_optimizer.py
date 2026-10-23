@@ -46,25 +46,23 @@ MIN_EV_THRESHOLD = -0.60
 # Maximum bets to return
 MAX_BETS = 5
 
-# D8 thresholds
+# D9 thresholds — A+B1集中戦略
 SHOUBU_MIN_SCORE = 68.0       # A判定: ◎>=68
 
-# D8 A判定: ◎単勝 — score>=68 AND odds 2-4倍
+# D9 A判定: ◎単勝 — score>=68 AND odds 2-4倍 (ROI 110%)
 BUY_HONMEI_ODDS_MIN = 2.0
 BUY_HONMEI_ODDS_MAX = 4.0
 
-# D8 B判定: 全レースから条件抽出（betConfidence制限なし）
-# B1: ◎単勝 中穴 — ◎score>=62 AND odds 4-6倍
+# D9 B判定: ◎単勝 中穴 — score>=62 AND odds 4-6倍 (ROI 113%)
 REC_B1_HONMEI_MIN_SCORE = 62.0
 REC_B1_HONMEI_ODDS_MIN = 4.0
 REC_B1_HONMEI_ODDS_MAX = 6.0
-# B2: AI4位単勝 — 4位score>=62 AND 4位odds 10-20 AND ◎score>=65
+
+# B2/B3 廃止 — 定数はlegacy互換のみ保持
 REC_B2_AI4_MIN_SCORE = 62.0
 REC_B2_AI4_MIN_ODDS = 10.0
 REC_B2_AI4_MAX_ODDS = 20.0
 REC_B2_HONMEI_MIN_SCORE = 65.0
-# B3: 馬連◎-AI3位 — A判定レースのみ
-# (条件はA判定と同一、optimize_bets_dual内で処理)
 # Legacy aliases
 REC_B1_NIBAN_MIN_SCORE = REC_B1_HONMEI_MIN_SCORE
 REC_B1_NIBAN_MIN_ODDS = REC_B1_HONMEI_ODDS_MIN
@@ -845,50 +843,12 @@ def optimize_bets_dual(
 
     existing_hns = {b["horses"][0] for b in core_bets if b["type"] == "tansho"}
 
-    # B1: ◎単勝 中穴 — ◎score>=62 AND odds 4-6倍 (A判定と排他)
+    # D9 B1: ◎単勝 中穴 — score>=62 AND odds 4-6倍 (A判定と排他)
     if not layer1_active:
         if (honmei_score >= REC_B1_HONMEI_MIN_SCORE
                 and REC_B1_HONMEI_ODDS_MIN <= honmei_odds < REC_B1_HONMEI_ODDS_MAX):
             bet = _make_tansho_bet(honmei_hn, len(core_bets) + 1)
             if bet:
-                core_bets.append(bet)
-                existing_hns.add(honmei_hn)
-                layer2_active = True
-
-    # B2: AI4位単勝 — 4位score>=62 AND odds 10-20 AND ◎score>=65
-    if len(ai_sorted) >= 4:
-        ai4_hn = ai_sorted[3]["horseNumber"]
-        ai4_score = ai_sorted[3].get("score", 0)
-        ai4_odds = _get_entry_odds(ai4_hn)
-        if (ai4_score >= REC_B2_AI4_MIN_SCORE
-                and REC_B2_AI4_MIN_ODDS <= ai4_odds <= REC_B2_AI4_MAX_ODDS
-                and honmei_score >= REC_B2_HONMEI_MIN_SCORE
-                and ai4_hn not in existing_hns):
-            bet = _make_tansho_bet(ai4_hn, len(core_bets) + 1)
-            if bet:
-                core_bets.append(bet)
-                existing_hns.add(ai4_hn)
-                layer2_active = True
-
-    # B3: 馬連◎-AI3位 — A判定レースのみ
-    if layer1_active and len(ai_sorted) >= 3:
-        ai3_hn = ai_sorted[2]["horseNumber"]
-        pair = sorted([honmei_hn, ai3_hn])
-        umaren_cand = next(
-            (c for c in candidates
-             if c["type"] == "umaren" and sorted(c["horses"]) == pair),
-            None,
-        )
-        if umaren_cand:
-            oi = find_odds_for_bet(umaren_cand, odds_data)
-            if oi and oi["odds"] >= 3.0:
-                bet = dict(umaren_cand)
-                bet["odds"] = oi["odds"]
-                bet["payout"] = oi["payout"]
-                bet["hasRealOdds"] = True
-                bet["ev"] = bet["hitProb"] * oi["odds"] - 1.0
-                bet["betSize"] = 1  # 最小単位
-                bet["rank"] = len(core_bets) + 1
                 core_bets.append(bet)
                 layer2_active = True
 
@@ -1140,27 +1100,9 @@ def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = 
             and BUY_HONMEI_ODDS_MIN <= honmei_odds < BUY_HONMEI_ODDS_MAX):
         return "A"
 
-    # D8 B: 推奨 — 全レースから条件抽出
-    def _get_odds(hn):
-        if not entries:
-            return 0.0
-        for e in entries:
-            if e.get("horseNumber") == hn and e.get("odds"):
-                return e["odds"]
-        return 0.0
-
-    # B1: ◎単勝 中穴 — ◎score>=62 AND odds 4-6倍
+    # D9 B: ◎単勝 中穴 — score>=62 AND odds 4-6倍
     if (honmei_score >= REC_B1_HONMEI_MIN_SCORE
             and REC_B1_HONMEI_ODDS_MIN <= honmei_odds < REC_B1_HONMEI_ODDS_MAX):
         return "B"
-
-    # B2: AI4位単勝 — 4位score>=62 AND odds 10-20 AND ◎score>=65
-    if len(ai_sorted) >= 4:
-        ai4_score = ai_sorted[3].get("score", 0)
-        ai4_odds = _get_odds(ai_sorted[3].get("horseNumber", 0))
-        if (ai4_score >= REC_B2_AI4_MIN_SCORE
-                and REC_B2_AI4_MIN_ODDS <= ai4_odds <= REC_B2_AI4_MAX_ODDS
-                and honmei_score >= REC_B2_HONMEI_MIN_SCORE):
-            return "B"
 
     return "C"
