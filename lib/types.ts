@@ -63,6 +63,29 @@ export interface FactorBreakdown {
   trackSpecific: number;
   horseWeightChange: number;
   formTrend: number;
+  sameDistance: number;
+  sameSurface: number;
+  sameCondition: number;
+  speedFigure: number;
+  runningStyle: number;
+  daysSinceLast: number;
+  weightCarriedTrend: number;
+  agari3f: number;
+  marginScore: number;
+  drawBias: number;
+  jockeyCourseDistance: number;
+  pacePositionAdvantage: number;
+  rotationFitness: number;
+  bloodlineTrackCondition: number;
+  valueDrop: number;
+  paceScenario: number;
+  cornerMove: number;
+  bmsAptitude: number;
+  classChange: number;
+  fieldLevel: number;
+  jockeyChange: number;
+  trackBias: number;
+  workoutEval: number;
 }
 
 export interface PredictionResult {

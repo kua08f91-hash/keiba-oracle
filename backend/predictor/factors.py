@@ -1559,3 +1559,123 @@ def calc_jockey_change(
         if last_pos <= 3 and last_pop <= 3:
             return 40.0  # Downgrade from good result
         return 45.0
+
+
+def calc_track_bias(
+    frame_number: int, past_races: list,
+    same_day_results: list = None, surface: str = ""
+) -> float:
+    """Score based on same-day track bias detection.
+
+    Analyzes earlier race results at the same course/surface to detect:
+    - Inner/outer frame bias (内枠有利 / 外枠有利)
+    - Running style bias (前有利 / 差し有利)
+
+    same_day_results: list of dicts from completed races at the same course:
+        {pos, frame, runningStyle, surface, horseNumber}
+    Returns 50.0 when no same-day data is available.
+    """
+    if not same_day_results or not frame_number:
+        return 50.0
+
+    relevant = [r for r in same_day_results if r.get("surface") == surface]
+    if len(relevant) < 6:
+        return 50.0
+
+    # Frame bias analysis: compare inner (1-4) vs outer (5-8) winners
+    inner_wins = 0
+    outer_wins = 0
+    for r in relevant:
+        if r.get("pos", 99) <= 3:  # top-3 finishers
+            fr = r.get("frame", 0)
+            if 1 <= fr <= 4:
+                inner_wins += 1
+            elif fr >= 5:
+                outer_wins += 1
+
+    total_top3 = inner_wins + outer_wins
+    if total_top3 < 3:
+        return 50.0
+
+    inner_ratio = inner_wins / total_top3
+    is_inner = frame_number <= 4
+    is_outer = frame_number >= 5
+
+    frame_score = 50.0
+    if inner_ratio >= 0.65 and is_inner:
+        frame_score = 62.0
+    elif inner_ratio >= 0.65 and is_outer:
+        frame_score = 38.0
+    elif inner_ratio <= 0.35 and is_outer:
+        frame_score = 62.0
+    elif inner_ratio <= 0.35 and is_inner:
+        frame_score = 38.0
+
+    # Running style bias
+    my_style = ""
+    for r in (past_races or [])[:3]:
+        s = r.get("runningStyle", "")
+        if s:
+            my_style = s
+            break
+
+    style_score = 50.0
+    if my_style:
+        front_wins = sum(1 for r in relevant
+                         if r.get("pos", 99) <= 3
+                         and r.get("runningStyle", "") in ("逃げ", "先行"))
+        close_wins = sum(1 for r in relevant
+                         if r.get("pos", 99) <= 3
+                         and r.get("runningStyle", "") in ("差し", "追込"))
+        style_total = front_wins + close_wins
+        if style_total >= 3:
+            front_ratio = front_wins / style_total
+            if front_ratio >= 0.65 and my_style in ("逃げ", "先行"):
+                style_score = 62.0
+            elif front_ratio >= 0.65 and my_style in ("差し", "追込"):
+                style_score = 38.0
+            elif front_ratio <= 0.35 and my_style in ("差し", "追込"):
+                style_score = 62.0
+            elif front_ratio <= 0.35 and my_style in ("逃げ", "先行"):
+                style_score = 38.0
+
+    return (frame_score + style_score) / 2.0
+
+
+def calc_workout_eval(workout: dict) -> float:
+    """Score based on training/workout evaluation.
+
+    workout dict fields (from oikiri page):
+        rank: str ("A", "B", "C", "D", "E") — overall evaluation
+        time: float — training time in seconds (optional)
+        course: str — "坂路", "CW", "ポリトラック" etc. (optional)
+        strong: bool — 一杯 (all-out) vs 馬なり (easy) (optional)
+
+    Returns 50.0 when no workout data is available.
+    """
+    if not workout:
+        return 50.0
+
+    rank = workout.get("rank", "")
+    if not rank:
+        return 50.0
+
+    _RANK_SCORES = {
+        "A": 75.0,
+        "B": 62.0,
+        "C": 50.0,
+        "D": 40.0,
+        "E": 30.0,
+    }
+    score = _RANK_SCORES.get(rank.upper(), 50.0)
+
+    # Bonus for strong training (一杯追い) if not evaluated as poor
+    if workout.get("strong") and score >= 50.0:
+        score = min(80.0, score + 5.0)
+
+    # Slight bonus for 坂路 training (hill workout = good conditioning)
+    course = workout.get("course", "")
+    if "坂路" in course and score >= 50.0:
+        score = min(80.0, score + 3.0)
+
+    return max(20.0, min(80.0, score))

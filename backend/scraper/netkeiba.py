@@ -142,6 +142,14 @@ def fetch_race_card(race_id: str, force_refresh: bool = False) -> Optional[dict]
                     if rd.get("weight") and not entry.get("horseWeight"):
                         entry["horseWeight"] = rd["weight"]
 
+        # Fetch workout (追い切り) evaluation data
+        oikiri_data = _fetch_oikiri_data(session, race_id)
+        if oikiri_data:
+            for entry in data["entries"]:
+                hn = entry["horseNumber"]
+                if hn in oikiri_data:
+                    entry["workout"] = oikiri_data[hn]
+
         # Cache in DB
         _cache_race_card(race_id, data)
         return data
@@ -237,6 +245,52 @@ def _fetch_result_data(session: requests.Session, race_id: str) -> dict:
         return result
     except Exception as e:
         logger.error("Error fetching result data: %s", e)
+        return {}
+
+
+def _fetch_oikiri_data(session: requests.Session, race_id: str) -> dict:
+    """Fetch workout (追い切り) evaluation data from oikiri page.
+
+    URL: https://race.netkeiba.com/race/oikiri.html?race_id={race_id}
+    Table: .OikiriTable rows, td[1]=馬番, td[4]=短評, td[5]=A/B/C/D grade.
+    Published at 13:00 the day before the race.
+
+    Returns {horseNumber: {"rank": "A"/"B"/"C"/"D", "comment": str}}.
+    """
+    url = f"https://race.netkeiba.com/race/oikiri.html?race_id={race_id}"
+    try:
+        time.sleep(SCRAPE_DELAY)
+        resp = session.get(url, timeout=10)
+        resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or "UTF-8"
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        result = {}
+        table = soup.select_one("table.OikiriTable")
+        if not table:
+            return {}
+
+        rows = table.select("tr")
+        for row in rows:
+            tds = row.select("td")
+            if len(tds) < 6:
+                continue
+            try:
+                horse_num = int(tds[1].get_text(strip=True))
+            except (ValueError, IndexError):
+                continue
+
+            comment = tds[4].get_text(strip=True) if len(tds) > 4 else ""
+            rank = tds[5].get_text(strip=True) if len(tds) > 5 else ""
+            rank = rank.upper() if rank in ("A", "B", "C", "D", "a", "b", "c", "d") else ""
+
+            if horse_num > 0 and rank:
+                result[horse_num] = {"rank": rank, "comment": comment}
+
+        logger.info("Race %s: oikiri data for %d horses", race_id, len(result))
+        return result
+    except Exception as e:
+        logger.debug("No oikiri data for %s: %s", race_id, e)
         return {}
 
 
