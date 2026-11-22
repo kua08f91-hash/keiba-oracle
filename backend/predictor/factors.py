@@ -1225,3 +1225,337 @@ def calc_bloodline_track_condition(
         return 60.0
 
     return 50.0
+
+
+# ---------------------------------------------------------------------------
+# New factors (D10)
+# ---------------------------------------------------------------------------
+
+
+def calc_pace_scenario(
+    past_races: list, entries: list, surface: str = ""
+) -> float:
+    """Score based on predicted race pace vs horse's running style.
+
+    Count front-runners (逃げ/先行) in entries to predict pace:
+      Many front-runners → fast pace → favors closers (差し/追込)
+      Few front-runners → slow pace → favors front-runners (逃げ/先行)
+    """
+    if not entries or not past_races:
+        return 50.0
+
+    active = [e for e in entries if not e.get("isScratched")]
+    if not active:
+        return 50.0
+
+    front_count = 0
+    for e in active:
+        pr = e.get("pastRaces", [])
+        if pr:
+            styles = [r.get("runningStyle", "") for r in pr[:3]]
+            if any(s in ("逃げ", "先行") for s in styles):
+                front_count += 1
+
+    head_count = len(active)
+    front_ratio = front_count / head_count if head_count else 0
+
+    my_style = ""
+    for r in past_races[:3]:
+        s = r.get("runningStyle", "")
+        if s:
+            my_style = s
+            break
+
+    if not my_style:
+        return 50.0
+
+    if front_ratio >= 0.45:
+        # Fast pace predicted
+        if my_style in ("差し", "追込"):
+            return 72.0
+        elif my_style == "先行":
+            return 42.0
+        else:  # 逃げ
+            return 35.0
+    elif front_ratio <= 0.25:
+        # Slow pace predicted
+        if my_style == "逃げ":
+            return 75.0
+        elif my_style == "先行":
+            return 65.0
+        elif my_style == "差し":
+            return 40.0
+        else:  # 追込
+            return 32.0
+    else:
+        # Medium pace
+        if my_style in ("先行", "差し"):
+            return 55.0
+        return 50.0
+
+
+def calc_corner_move(past_races: list) -> float:
+    """Score based on corner position improvement patterns.
+
+    Horses that consistently move up through corners (makuri/closing)
+    have tactical ability. Detects position gains from 3rd→4th corner.
+    """
+    if not past_races:
+        return 50.0
+
+    gains = []
+    for race in past_races[:5]:
+        corners = race.get("corners", [])
+        if len(corners) >= 2:
+            last_two = corners[-2:]
+            gain = last_two[0] - last_two[1]
+            gains.append(gain)
+
+    if not gains:
+        return 50.0
+
+    avg_gain = sum(gains) / len(gains)
+
+    if avg_gain >= 3.0:
+        return 78.0  # Strong closer, consistently moves up
+    elif avg_gain >= 1.5:
+        return 65.0
+    elif avg_gain >= 0.5:
+        return 55.0
+    elif avg_gain >= -0.5:
+        return 50.0  # Holds position
+    elif avg_gain >= -1.5:
+        return 42.0  # Loses position
+    else:
+        return 35.0  # Fades badly
+
+
+def calc_bms_aptitude(bms: str, surface: str, distance: int) -> float:
+    """Score based on broodmare sire (BMS) aptitude for surface/distance.
+
+    Uses known BMS profiles for turf/dirt and sprint/mile/stayer tendencies.
+    """
+    if not bms:
+        return 50.0
+
+    _BMS_TURF = {
+        "ディープインパクト", "キングカメハメハ", "ハーツクライ", "ステイゴールド",
+        "ダイワメジャー", "マンハッタンカフェ", "シンボリクリスエス", "ネオユニヴァース",
+        "ゼンノロブロイ", "タニノギムレット", "スペシャルウィーク", "サンデーサイレンス",
+        "アグネスタキオン", "フジキセキ", "エピファネイア", "ロードカナロア",
+        "オルフェーヴル", "ドゥラメンテ", "モーリス", "キタサンブラック",
+    }
+    _BMS_DIRT = {
+        "クロフネ", "ゴールドアリュール", "キングカメハメハ", "フレンチデピュティ",
+        "ブライアンズタイム", "エンパイアメーカー", "ヘニーヒューズ", "パイロ",
+        "サウスヴィグラス", "カジノドライヴ", "シニスターミニスター",
+    }
+    _BMS_STAYER = {
+        "ステイゴールド", "マンハッタンカフェ", "ハーツクライ", "ダンスインザダーク",
+        "メジロマックイーン", "ブライアンズタイム", "オペラハウス",
+    }
+    _BMS_SPRINT = {
+        "サクラバクシンオー", "タイキシャトル", "ロードカナロア", "アドマイヤムーン",
+        "ダイワメジャー", "フジキセキ",
+    }
+
+    score = 50.0
+    bms_clean = bms.strip()
+
+    # Surface aptitude
+    if surface == "芝":
+        if any(s in bms_clean for s in _BMS_TURF):
+            score += 8.0
+        if any(s in bms_clean for s in _BMS_DIRT):
+            score -= 5.0
+    else:  # ダート
+        if any(s in bms_clean for s in _BMS_DIRT):
+            score += 8.0
+        if any(s in bms_clean for s in _BMS_TURF):
+            score -= 3.0
+
+    # Distance aptitude
+    if distance >= 2200:
+        if any(s in bms_clean for s in _BMS_STAYER):
+            score += 6.0
+        if any(s in bms_clean for s in _BMS_SPRINT):
+            score -= 5.0
+    elif distance <= 1400:
+        if any(s in bms_clean for s in _BMS_SPRINT):
+            score += 6.0
+        if any(s in bms_clean for s in _BMS_STAYER):
+            score -= 5.0
+
+    return max(20.0, min(80.0, score))
+
+
+def calc_class_change(past_races: list, grade: str = "") -> float:
+    """Score based on class level change.
+
+    Stepping up in class is harder; stepping down is easier.
+    Uses grade field and field size/margin from past races.
+    """
+    if not past_races:
+        return 50.0
+
+    _CLASS_RANK = {
+        "新馬": 1, "未勝利": 1, "1勝": 2, "1勝クラス": 2,
+        "2勝": 3, "2勝クラス": 3, "3勝": 4, "3勝クラス": 4,
+        "OP": 5, "オープン": 5, "L": 5, "リステッド": 5,
+        "G3": 6, "GIII": 6, "G2": 7, "GII": 7, "G1": 8, "GI": 8,
+    }
+
+    def _grade_rank(g):
+        if not g:
+            return 0
+        for key, rank in _CLASS_RANK.items():
+            if key in g:
+                return rank
+        return 0
+
+    current_rank = _grade_rank(grade)
+
+    # Estimate from last race field size and margin
+    last = past_races[0]
+    last_pos = last.get("pos", 0)
+    last_field = last.get("fieldSize", 0)
+    last_margin = last.get("margin", 0)
+
+    if current_rank == 0:
+        # Cannot determine class — use performance-based estimate
+        if last_pos <= 3 and last_margin <= 0.5:
+            return 60.0  # Won/placed comfortably, likely handles this class
+        elif last_pos <= 5:
+            return 52.0
+        return 48.0
+
+    # Find previous class from past race names (imperfect but useful)
+    prev_rank = 0
+    for r in past_races[:3]:
+        # Try to infer class from field size and position
+        fs = r.get("fieldSize", 0)
+        if fs >= 16 and last_pos <= 3:
+            prev_rank = max(prev_rank, current_rank - 1)
+        break
+
+    if prev_rank == 0:
+        prev_rank = current_rank  # Assume same class
+
+    diff = current_rank - prev_rank
+    if diff >= 2:
+        return 32.0  # Major class jump
+    elif diff == 1:
+        return 42.0  # One class up
+    elif diff == 0:
+        if last_pos == 1:
+            return 62.0  # Won at this level
+        elif last_pos <= 3:
+            return 55.0
+        return 50.0
+    elif diff == -1:
+        return 65.0  # Class drop
+    else:
+        return 72.0  # Major class drop
+
+
+def calc_field_level(past_races: list, entries: list, target_distance: int) -> float:
+    """Score relative to estimated field strength.
+
+    Compares this horse's speed figure to the field average.
+    Strong horse in weak field = high score.
+    """
+    if not past_races or not entries:
+        return 50.0
+
+    def _horse_speed(pr_list, dist):
+        if not pr_list:
+            return None
+        speeds = []
+        for r in pr_list[:3]:
+            ft = r.get("finishTime", "")
+            rd = r.get("distance", 0)
+            if not ft or rd == 0:
+                continue
+            try:
+                parts = ft.split(":")
+                if len(parts) == 2:
+                    secs = float(parts[0]) * 60 + float(parts[1])
+                else:
+                    secs = float(parts[0])
+                normalized = secs / rd * 1000
+                speeds.append(normalized)
+            except (ValueError, ZeroDivisionError):
+                continue
+        return min(speeds) if speeds else None
+
+    my_speed = _horse_speed(past_races, target_distance)
+    if my_speed is None:
+        return 50.0
+
+    field_speeds = []
+    for e in entries:
+        if e.get("isScratched"):
+            continue
+        pr = e.get("pastRaces", [])
+        s = _horse_speed(pr, target_distance)
+        if s is not None:
+            field_speeds.append(s)
+
+    if len(field_speeds) < 3:
+        return 50.0
+
+    avg_speed = sum(field_speeds) / len(field_speeds)
+    # Lower time = faster. Advantage = avg - my (positive = I'm faster)
+    advantage = avg_speed - my_speed
+
+    if advantage >= 1.5:
+        return 78.0  # Clearly fastest in field
+    elif advantage >= 0.8:
+        return 68.0
+    elif advantage >= 0.3:
+        return 58.0
+    elif advantage >= -0.3:
+        return 50.0  # Average
+    elif advantage >= -0.8:
+        return 42.0
+    elif advantage >= -1.5:
+        return 35.0
+    else:
+        return 28.0  # Clearly slowest
+
+
+def calc_jockey_change(
+    past_races: list, current_jockey: str
+) -> float:
+    """Score based on jockey change effect.
+
+    Upgrade to a better jockey = positive signal.
+    Downgrade = negative signal.
+    Continuation of top jockey = slight positive.
+    """
+    if not past_races or not current_jockey:
+        return 50.0
+
+    current_rating = JOCKEY_RATINGS.get(current_jockey, 70)
+
+    # Find previous jockey from last race (not directly available in pastRaces)
+    # Instead, use the jockey's rating relative to the horse's past performance
+    # If a high-rated jockey is riding a horse that ran poorly, it's bullish
+    last_pos = past_races[0].get("pos", 0) if past_races else 0
+    last_pop = past_races[0].get("popularity", 0) if past_races else 0
+
+    if current_rating >= 90:
+        # Top jockey
+        if last_pos > 5:
+            return 68.0  # Top jockey on previously poor runner = bullish
+        return 60.0
+    elif current_rating >= 82:
+        if last_pos > 5:
+            return 58.0
+        return 55.0
+    elif current_rating >= 75:
+        return 50.0
+    else:
+        if last_pos <= 3 and last_pop <= 3:
+            return 40.0  # Downgrade from good result
+        return 45.0

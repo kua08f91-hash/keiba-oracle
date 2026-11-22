@@ -1,11 +1,13 @@
-"""Dynamic per-race betting optimizer (D7 — EV Focus strategy).
+"""Dynamic per-race betting optimizer (D10 — threshold-optimized strategy).
 
-D7: 投資対象とEV+参考表記の2層構造
-  投資対象 (BUY): ◎単勝のみ — score>=68 AND odds 2-4倍のレースに集中
-  参考表記 (INFO): 全券種からEV>0の買い目を表示（購入判断はユーザー）
+D10: 閾値最適化 + 6新ファクター
+  A判定 (勝負): ◎単勝 — score>=64 AND odds 2-5倍
+  B判定 (推奨): ◎単勝 — score>=64 AND odds 3-5倍 (A条件外)
+  C判定 (SKIP): 該当なし
 
-Validated on 108R (8/22-23, 8/29):
-  ◎単勝 2-4倍+score>=68: ROI 122% (22R中10的中, 45.5%)
+Backtested on Oct-Nov 149R:
+  A: score>=64, odds 2-5x → ROI 96.8% (114R, 32.5% WR)
+  B: score>=64, odds 3-5x → ROI 116.0% (33R, 27.3% WR)
 """
 from __future__ import annotations
 
@@ -46,17 +48,17 @@ MIN_EV_THRESHOLD = -0.60
 # Maximum bets to return
 MAX_BETS = 5
 
-# D9 thresholds — A+B1集中戦略
-SHOUBU_MIN_SCORE = 68.0       # A判定: ◎>=68
+# D10 thresholds — 閾値最適化 (Oct-Nov 149R backtested)
+SHOUBU_MIN_SCORE = 64.0       # A判定: ◎>=64 (from 68)
 
-# D9 A判定: ◎単勝 — score>=68 AND odds 2-4倍 (ROI 110%)
+# D10 A判定: ◎単勝 — score>=64 AND odds 2-5倍 (backtest ROI 96.8%)
 BUY_HONMEI_ODDS_MIN = 2.0
-BUY_HONMEI_ODDS_MAX = 4.0
+BUY_HONMEI_ODDS_MAX = 5.0    # from 4.0
 
-# D9 B判定: ◎単勝 中穴 — score>=62 AND odds 4-6倍 (ROI 113%)
-REC_B1_HONMEI_MIN_SCORE = 62.0
-REC_B1_HONMEI_ODDS_MIN = 4.0
-REC_B1_HONMEI_ODDS_MAX = 6.0
+# D10 B判定: ◎単勝 中穴 — score>=64 AND odds 3-5倍 (backtest ROI 116%)
+REC_B1_HONMEI_MIN_SCORE = 64.0  # from 62.0
+REC_B1_HONMEI_ODDS_MIN = 3.0    # from 4.0
+REC_B1_HONMEI_ODDS_MAX = 5.0    # from 6.0
 
 # B2/B3 廃止 — 定数はlegacy互換のみ保持
 REC_B2_AI4_MIN_SCORE = 62.0
@@ -1070,15 +1072,12 @@ def detect_race_pattern(probs: Dict[int, float]) -> str:
 
 
 def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = None) -> str:
-    """D7: 3段階レース判定.
+    """D10: 3段階レース判定.
 
     Returns:
-      "A" (勝負): ◎単勝BUY対象 — score>=68 AND odds 2-4倍
-      "B" (推奨): EV+の買い目あり — score>=68 だがBUY条件外、またはEV+候補あり
+      "A" (勝負): ◎単勝BUY対象 — score>=64 AND odds 2-5倍
+      "B" (推奨): ◎単勝推奨 — score>=64 AND odds 3-5倍 (A条件外)
       "C" (SKIP): 該当なし
-
-    "B" is determined by score threshold only at this stage;
-    actual EV+ presence is checked by optimize_bets_dual separately.
     """
     ai_sorted = sorted(predictions, key=lambda p: -p.get("score", 0))
     if not ai_sorted:
@@ -1100,7 +1099,7 @@ def evaluate_bet_confidence(predictions: list, race_info: dict, entries: list = 
             and BUY_HONMEI_ODDS_MIN <= honmei_odds < BUY_HONMEI_ODDS_MAX):
         return "A"
 
-    # D9 B: ◎単勝 中穴 — score>=62 AND odds 4-6倍
+    # D10 B: ◎単勝 推奨 — score>=64 AND odds 3-5倍 (A条件外)
     if (honmei_score >= REC_B1_HONMEI_MIN_SCORE
             and REC_B1_HONMEI_ODDS_MIN <= honmei_odds < REC_B1_HONMEI_ODDS_MAX):
         return "B"

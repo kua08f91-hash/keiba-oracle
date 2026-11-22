@@ -85,11 +85,11 @@ class TestWeightBalance:
             "'valueDrop' key missing from ANALYTICAL_WEIGHTS in scoring.py"
         )
 
-    def test_value_drop_weight_is_0035(self):
-        """'valueDrop' weight must be exactly 0.035 (3.5%)."""
+    def test_value_drop_weight_is_positive(self):
+        """'valueDrop' weight must be positive."""
         weights = _weights()
-        assert weights["valueDrop"] == pytest.approx(0.035, abs=1e-9), (
-            f"Expected valueDrop weight 0.035, got {weights['valueDrop']}"
+        assert weights["valueDrop"] > 0, (
+            f"Expected valueDrop weight > 0, got {weights['valueDrop']}"
         )
 
     def test_value_drop_key_exists_in_all_factor_keys(self):

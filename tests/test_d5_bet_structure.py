@@ -412,11 +412,11 @@ class TestShoubuHantei:
         result = evaluate_bet_confidence([], {})
         assert result == "C"
 
-    def test_score_exactly_at_threshold_68(self):
-        """Boundary value: exactly 68.0 with good odds → A, without odds → C (no B info)."""
+    def test_score_exactly_at_threshold_64(self):
+        """Boundary value: exactly 64.0 with good odds → A, without odds → C (no B info)."""
         from backend.predictor.bet_optimizer import evaluate_bet_confidence, SHOUBU_MIN_SCORE
-        assert SHOUBU_MIN_SCORE == 68.0
-        predictions = _make_predictions([68.0, 50.0, 40.0])
+        assert SHOUBU_MIN_SCORE == 64.0
+        predictions = _make_predictions([64.0, 50.0, 40.0])
         entries = [{"horseNumber": 1, "odds": 3.0}]
         assert evaluate_bet_confidence(predictions, {}, entries) == "A"
         assert evaluate_bet_confidence(predictions, {}) == "C"

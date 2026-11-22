@@ -45,41 +45,52 @@ from .factors import (
     calc_rotation_fitness,
     calc_bloodline_track_condition,
     calc_value_drop,
+    calc_pace_scenario,
+    calc_corner_move,
+    calc_bms_aptitude,
+    calc_class_change,
+    calc_field_level,
+    calc_jockey_change,
 )
 
 # Analytical factor weights (non-market factors, must sum to ~1.0)
 # Optimized via 1,107-race historical data (2023-2024)
 # Constrained: max 30% per factor to prevent overfitting
 ANALYTICAL_WEIGHTS = {
-    "trackDirection": 0.0377,  # Reduced from 0.0527 (-0.015) to fund valueDrop
-    "trackCondition": 0.0817,  # Reduced from 0.1017 (-0.020) to fund valueDrop
-    "trackSpecific": 0.0476,
-    "jockeyAbility": 0.0552,  # Reduced from 0.0952 to fund D6 new factors
-    "sameDistance": 0.0635,
-    "sameSurface": 0.0635,
-    "sameCondition": 0.0476,
-    "pastPerformance": 0.0476,
-    "speedFigure": 0.0476,
-    "runningStyle": 0.0370,
-    "daysSinceLast": 0.0212,
-    "weightCarriedTrend": 0.0212,
-    "formTrend": 0.0370,
-    "ageAndSex": 0.0370,
-    "weightCarried": 0.0265,
-    "horseWeightChange": 0.0265,
-    "trainerAbility": 0.0265,
-    "courseAffinity": 0.0265,
-    "distanceAptitude": 0.0212,
-    "agari3f": 0.0212,
-    "marginScore": 0.0212,
-    "drawBias": 0.0400,
-    # D6 new factors
-    "jockeyCourseDistance": 0.04,
-    "pacePositionAdvantage": 0.03,
-    "rotationFitness": 0.02,
-    "bloodlineTrackCondition": 0.02,
-    # Value Drop factor (前走好走+今走人気下落)
-    "valueDrop": 0.035,
+    "trackDirection": 0.033,
+    "trackCondition": 0.069,
+    "trackSpecific": 0.042,
+    "jockeyAbility": 0.048,
+    "sameDistance": 0.056,
+    "sameSurface": 0.056,
+    "sameCondition": 0.042,
+    "pastPerformance": 0.042,
+    "speedFigure": 0.042,
+    "runningStyle": 0.032,
+    "daysSinceLast": 0.019,
+    "weightCarriedTrend": 0.019,
+    "formTrend": 0.032,
+    "ageAndSex": 0.032,
+    "weightCarried": 0.023,
+    "horseWeightChange": 0.023,
+    "trainerAbility": 0.023,
+    "courseAffinity": 0.023,
+    "distanceAptitude": 0.019,
+    "agari3f": 0.019,
+    "marginScore": 0.019,
+    "drawBias": 0.035,
+    "jockeyCourseDistance": 0.035,
+    "pacePositionAdvantage": 0.026,
+    "rotationFitness": 0.018,
+    "bloodlineTrackCondition": 0.018,
+    "valueDrop": 0.031,
+    # D10 new factors
+    "paceScenario": 0.026,
+    "cornerMove": 0.018,
+    "bmsAptitude": 0.018,
+    "classChange": 0.018,
+    "fieldLevel": 0.026,
+    "jockeyChange": 0.018,
 }
 # Defaults (22 keys, sum=1.0). When optimized_weights.json is loaded,
 # its values replace these entirely.
@@ -108,7 +119,9 @@ ALL_FACTOR_KEYS = ["marketScore", "pastPerformance", "jockeyAbility",
                    "agari3f", "marginScore", "drawBias",
                    "jockeyCourseDistance", "pacePositionAdvantage",
                    "rotationFitness", "bloodlineTrackCondition",
-                   "valueDrop"]
+                   "valueDrop",
+                   "paceScenario", "cornerMove", "bmsAptitude",
+                   "classChange", "fieldLevel", "jockeyChange"]
 
 
 class WeightedScoringModel(PredictionModel):
@@ -209,6 +222,15 @@ class WeightedScoringModel(PredictionModel):
                 "valueDrop": calc_value_drop(
                     past_races, popularity, odds if odds else 0.0
                 ),
+                # D10 new factors
+                "paceScenario": calc_pace_scenario(past_races, entries, surface),
+                "cornerMove": calc_corner_move(past_races),
+                "bmsAptitude": calc_bms_aptitude(bms, surface, distance),
+                "classChange": calc_class_change(
+                    past_races, race_info.get("grade", "")
+                ),
+                "fieldLevel": calc_field_level(past_races, entries, distance),
+                "jockeyChange": calc_jockey_change(past_races, jockey),
             }
 
             # Analytical score (non-market factors only)

@@ -1291,32 +1291,26 @@ class TestBetConfidenceOddsTransitions:
         )
         assert body_c["betConfidence"] == "C"
 
-    def test_bet_confidence_is_B_when_niban_meets_b_rank_conditions(self):
-        """betConfidence='B' when ◯ (rank-2) score>=60 and odds>=8.0.
+    def test_bet_confidence_is_A_when_honmei_meets_d10_conditions(self):
+        """betConfidence='A' when ◎ score>=64 and odds in [2.0, 5.0).
 
-        Arrange: horse 1 is honmei (score=65, highest but <68 → not A).
-        Horse 2 is niban (score=62 >= 60). _make_live_odds_mock puts horse 2
-        at 10.0 (hardcoded), which satisfies niban_odds >= 8 → B.
+        D10: score=65>=64, odds=3.0 in [2.0, 5.0) → A.
         """
         from backend._tz import now_jst
         fetch_data = _make_fetch_race_card_data(entry_count=3)
         fetch_data["race_info"]["date"] = now_jst().strftime("%Y%m%d")
 
-        # Horse 1 = honmei (score 65, highest, but 65 < 68 → not A)
-        # Horse 2 = niban (score 62 >= 60, odds=10.0 from mock >= 8 → B)
         predictions = [
-            {"horseNumber": 1, "score": 65},  # honmei: score < 68, not A
-            {"horseNumber": 2, "score": 62},  # niban: score >= 60
+            {"horseNumber": 1, "score": 65},  # honmei: score >= 64 → A with right odds
+            {"horseNumber": 2, "score": 62},
             {"horseNumber": 3, "score": 40},
         ]
-        # _make_live_odds_mock: horse 1 → horse1_odds, horse 2 → 10.0, horse 3 → 25.0
-        # With horse1_odds=5.0 (outside [2.0,4.0) BUY range) and horse 2 at 10.0 >= 8 → B
-        mock_resp = self._make_live_odds_mock(horse1_odds=5.0)
+        mock_resp = self._make_live_odds_mock(horse1_odds=3.0)
 
         body = self._run_optimized_bets(fetch_data, predictions, mock_resp)
-        assert body["betConfidence"] == "B", (
-            f"Expected B confidence for honmei score=65 odds=5.0, "
-            f"niban score=62 odds=10.0; got {body['betConfidence']}"
+        assert body["betConfidence"] == "A", (
+            f"Expected A confidence for honmei score=65 odds=3.0; "
+            f"got {body['betConfidence']}"
         )
 
 

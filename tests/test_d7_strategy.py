@@ -1,13 +1,13 @@
-"""TDD tests for D7 EV Focus betting strategy.
+"""TDD tests for D10 EV Focus betting strategy.
 
-D7 two-layer structure:
-  BUY layer (core_bets): ◎単勝 ONLY when score>=68 AND honmei odds in [2.0, 4.0)
+D10 two-layer structure:
+  BUY layer (core_bets): ◎単勝 ONLY when score>=64 AND honmei odds in [2.0, 5.0)
   INFO layer (value_bets): All bet types where EV>0, capped at 5 bets
 
 Key constants under test:
-  SHOUBU_MIN_SCORE      = 68.0
+  SHOUBU_MIN_SCORE      = 64.0
   BUY_HONMEI_ODDS_MIN   = 2.0
-  BUY_HONMEI_ODDS_MAX   = 4.0
+  BUY_HONMEI_ODDS_MAX   = 5.0
   INFO_BET_TYPES        = {tansho, umaren, umatan, wide, sanrenpuku, sanrentan}
   INFO_MAX_BETS         = 5
   INFO_MIN_ODDS         = 2.0
@@ -146,7 +146,7 @@ def _run_dual(
 
 @pytest.fixture
 def confident_predictions():
-    """◎ score=75 — above SHOUBU_MIN_SCORE=68.
+    """◎ score=75 — above SHOUBU_MIN_SCORE=64.
     ◯ score=55 — below REC_NIBAN_MIN_SCORE=60 to avoid triggering B.
     """
     return _make_predictions([75.0, 55.0, 50.0, 45.0, 40.0, 33.0, 25.0, 18.0])
@@ -154,7 +154,7 @@ def confident_predictions():
 
 @pytest.fixture
 def weak_predictions():
-    """◎ score=60 — below SHOUBU_MIN_SCORE=68."""
+    """◎ score=60 — below SHOUBU_MIN_SCORE=64."""
     return _make_predictions([60.0, 55.0, 50.0, 45.0, 40.0, 35.0, 30.0, 25.0])
 
 
@@ -231,15 +231,15 @@ class TestReturnSchema:
 # ---------------------------------------------------------------------------
 
 class TestBuyLayerActivation:
-    """layer1_active is True ONLY when BOTH gates pass: score>=68 AND odds in [2.0, 4.0)."""
+    """layer1_active is True ONLY when BOTH gates pass: score>=64 AND odds in [2.0, 5.0)."""
 
-    def test_active_when_score_68_and_odds_3x(self):
-        """score=68 (boundary), odds=3.0 → active."""
-        preds = _make_predictions([68.0, 55.0, 45.0, 38.0, 30.0, 22.0, 15.0, 8.0])
+    def test_active_when_score_64_and_odds_3x(self):
+        """score=64 (boundary), odds=3.0 → active."""
+        preds = _make_predictions([64.0, 55.0, 45.0, 38.0, 30.0, 22.0, 15.0, 8.0])
         odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=3.0)
         result = _run_dual(preds, odds, honmei_odds=3.0)
         assert result["layer1_active"] is True, (
-            f"Expected layer1_active=True for score=68, odds=3.0; got {result['layer1_active']}"
+            f"Expected layer1_active=True for score=64, odds=3.0; got {result['layer1_active']}"
         )
 
     def test_active_when_score_75_and_odds_2x_boundary(self):
@@ -251,20 +251,20 @@ class TestBuyLayerActivation:
             f"Expected layer1_active=True for odds=2.0 (min boundary); got {result['layer1_active']}"
         )
 
-    def test_inactive_when_odds_exactly_4x(self):
-        """odds=4.0 is the exclusive upper bound → NOT active."""
+    def test_inactive_when_odds_exactly_5x(self):
+        """odds=5.0 is the exclusive upper bound → NOT active."""
         preds = _make_predictions([75.0, 60.0, 50.0, 42.0, 35.0, 28.0, 20.0, 12.0])
-        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=4.0)
-        result = _run_dual(preds, odds, honmei_odds=4.0)
+        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=5.0)
+        result = _run_dual(preds, odds, honmei_odds=5.0)
         assert result["layer1_active"] is False, (
-            f"Expected layer1_active=False for odds=4.0 (exclusive max); got {result['layer1_active']}"
+            f"Expected layer1_active=False for odds=5.0 (exclusive max); got {result['layer1_active']}"
         )
 
     def test_inactive_when_odds_above_range(self):
-        """odds=5.0 > 4.0 → NOT active even with high score."""
+        """odds=6.0 > 5.0 → NOT active even with high score."""
         preds = _make_predictions([80.0, 65.0, 55.0, 48.0, 40.0, 33.0, 25.0, 18.0])
-        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=5.0)
-        result = _run_dual(preds, odds, honmei_odds=5.0)
+        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=6.0)
+        result = _run_dual(preds, odds, honmei_odds=6.0)
         assert result["layer1_active"] is False
 
     def test_inactive_when_odds_below_range(self):
@@ -274,13 +274,13 @@ class TestBuyLayerActivation:
         result = _run_dual(preds, odds, honmei_odds=1.5)
         assert result["layer1_active"] is False
 
-    def test_inactive_when_score_below_68(self):
-        """score=67.9 < 68 → NOT active even with perfect odds."""
-        preds = _make_predictions([67.9, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
+    def test_inactive_when_score_below_64(self):
+        """score=63.9 < 64 → NOT active even with perfect odds."""
+        preds = _make_predictions([63.9, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
         odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=3.0)
         result = _run_dual(preds, odds, honmei_odds=3.0)
         assert result["layer1_active"] is False, (
-            f"Expected False for score=67.9; got {result['layer1_active']}"
+            f"Expected False for score=63.9; got {result['layer1_active']}"
         )
 
     def test_inactive_when_score_zero(self):
@@ -337,13 +337,13 @@ class TestBuyLayerBetCount:
         )
 
     def test_buy_layer_inactive_when_outside_range(self, confident_predictions, full_odds_outside_range):
-        """D8: layer1_active=False when odds outside 2-4x. B layers may still fire."""
+        """D10: layer1_active=False when odds outside 2-5x. B layers may still fire."""
         result = _run_dual(confident_predictions, full_odds_outside_range, honmei_odds=5.0)
         assert result["layer1_active"] is False
         assert isinstance(result["core_bets"], list)
 
     def test_buy_layer_empty_for_weak_predictions(self, weak_predictions, full_odds_buy_range):
-        """Weak ◎ (score<68) → core_bets empty even if odds are in range."""
+        """Weak ◎ (score<64) → core_bets empty even if odds are in range."""
         result = _run_dual(weak_predictions, full_odds_buy_range, honmei_odds=3.0)
         assert result["core_bets"] == [], (
             f"Expected empty core_bets for low score, got {result['core_bets']}"
@@ -375,8 +375,8 @@ class TestBuyLayerBetFields:
 
     def test_buy_bet_odds_is_in_range(self, confident_predictions, full_odds_buy_range):
         bet = self._get_buy_bet(confident_predictions, full_odds_buy_range)
-        assert 2.0 <= bet["odds"] < 4.0, (
-            f"BUY odds must be in [2.0, 4.0), got {bet['odds']}"
+        assert 2.0 <= bet["odds"] < 5.0, (
+            f"BUY odds must be in [2.0, 5.0), got {bet['odds']}"
         )
 
     def test_buy_bet_has_ev(self, confident_predictions, full_odds_buy_range):
@@ -836,34 +836,33 @@ class TestLayer1ActiveFlag:
             f"Expected honmei_odds≈3.5, got {result['honmei_odds']}"
         )
 
-    def test_odds_exactly_4_gives_false(self):
-        """Boundary: 4.0 is exclusive upper bound → layer1_active must be False.
+    def test_odds_exactly_5_gives_false(self):
+        """Boundary: 5.0 is exclusive upper bound → layer1_active must be False.
         Use low ◯ score to avoid B-layer activation."""
         preds = _make_predictions([75.0, 55.0, 50.0, 45.0, 40.0, 33.0, 25.0, 18.0])
-        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=4.0)
-        entries = _make_entries_with_odds(8, 4.0)
-        result = _run_dual(preds, odds, honmei_odds=4.0, entries=entries)
+        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=5.0)
+        entries = _make_entries_with_odds(8, 5.0)
+        result = _run_dual(preds, odds, honmei_odds=5.0, entries=entries)
         assert result["layer1_active"] is False
-        # D8: odds=4.0 may trigger B1 (4-6 range), so core_bets may have B bets
 
-    def test_odds_3_99_is_in_range(self):
-        """3.99 is inside [2.0, 4.0) → active."""
+    def test_odds_4_99_is_in_range(self):
+        """4.99 is inside [2.0, 5.0) → active."""
         preds = _make_predictions([75.0, 65.0, 55.0, 48.0, 40.0, 33.0, 25.0, 18.0])
-        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=3.99)
-        entries = _make_entries_with_odds(8, 3.99)
-        result = _run_dual(preds, odds, honmei_odds=3.99, entries=entries)
+        odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=4.99)
+        entries = _make_entries_with_odds(8, 4.99)
+        result = _run_dual(preds, odds, honmei_odds=4.99, entries=entries)
         assert result["layer1_active"] is True
 
-    def test_score_boundary_67_9_gives_false(self):
-        """score=67.9 is just below 68 → layer1_active=False."""
-        preds = _make_predictions([67.9, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
+    def test_score_boundary_63_9_gives_false(self):
+        """score=63.9 is just below 64 → layer1_active=False."""
+        preds = _make_predictions([63.9, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
         odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=3.0)
         result = _run_dual(preds, odds, honmei_odds=3.0)
         assert result["layer1_active"] is False
 
-    def test_score_boundary_68_gives_true(self):
-        """score=68.0 is exactly at threshold → layer1_active=True."""
-        preds = _make_predictions([68.0, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
+    def test_score_boundary_64_gives_true(self):
+        """score=64.0 is exactly at threshold → layer1_active=True."""
+        preds = _make_predictions([64.0, 60.0, 50.0, 43.0, 36.0, 29.0, 22.0, 15.0])
         odds = _make_full_odds(1, [2, 3, 4, 5, 6, 7, 8], honmei_tansho_odds=3.0)
         result = _run_dual(preds, odds, honmei_odds=3.0)
         assert result["layer1_active"] is True
@@ -952,17 +951,17 @@ class TestInfoLayerBetFields:
 class TestD7Constants:
     """All D7 strategy constants must have the correct values."""
 
-    def test_shoubu_min_score_is_68(self):
+    def test_shoubu_min_score_is_64(self):
         from backend.predictor.bet_optimizer import SHOUBU_MIN_SCORE
-        assert SHOUBU_MIN_SCORE == 68.0
+        assert SHOUBU_MIN_SCORE == 64.0
 
     def test_buy_honmei_odds_min_is_2(self):
         from backend.predictor.bet_optimizer import BUY_HONMEI_ODDS_MIN
         assert BUY_HONMEI_ODDS_MIN == 2.0
 
-    def test_buy_honmei_odds_max_is_4(self):
+    def test_buy_honmei_odds_max_is_5(self):
         from backend.predictor.bet_optimizer import BUY_HONMEI_ODDS_MAX
-        assert BUY_HONMEI_ODDS_MAX == 4.0
+        assert BUY_HONMEI_ODDS_MAX == 5.0
 
     def test_info_max_bets_is_5(self):
         from backend.predictor.bet_optimizer import INFO_MAX_BETS
@@ -1014,7 +1013,7 @@ class TestIntegration:
         assert all(b["ev"] > 0 for b in result["value_bets"])
 
     def test_weak_race_no_buy_but_has_info(self, weak_predictions, full_odds_buy_range):
-        """Weak ◎ (score<68): BUY layer silent, INFO layer still provides picks."""
+        """Weak ◎ (score<64): BUY layer silent, INFO layer still provides picks."""
         result = _run_dual(weak_predictions, full_odds_buy_range, honmei_odds=3.0)
         assert result["layer1_active"] is False
         assert result["core_bets"] == []
@@ -1022,7 +1021,7 @@ class TestIntegration:
         assert isinstance(result["value_bets"], list)
 
     def test_high_odds_race_layer1_inactive(self, confident_predictions, full_odds_outside_range):
-        """High odds ◎ (odds>4x): A layer silent, B layers may fire."""
+        """High odds ◎ (odds>5x): A layer silent, B layers may fire."""
         result = _run_dual(confident_predictions, full_odds_outside_range, honmei_odds=5.0)
         assert result["layer1_active"] is False
         assert isinstance(result["core_bets"], list)
